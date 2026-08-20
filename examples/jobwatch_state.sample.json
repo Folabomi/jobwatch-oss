@@ -1,0 +1,355 @@
+{
+  "version": 1,
+  "last_run": "2026-04-02T09:00:00+00:00",
+  "boards": {
+    "acme": {
+      "company": "Acme Cloud",
+      "platform": "greenhouse",
+      "live": 412,
+      "matches": 5,
+      "dropped_non_us": 3,
+      "locations_resolved": 0,
+      "with_posted_band": 5,
+      "status": "ok"
+    },
+    "northwind": {
+      "company": "Northwind Systems",
+      "platform": "workday",
+      "live": 220,
+      "matches": 4,
+      "dropped_non_us": 2,
+      "locations_resolved": 4,
+      "with_posted_band": 3,
+      "status": "ok"
+    },
+    "globex": {
+      "company": "Globex Networks",
+      "platform": "ashby",
+      "live": 180,
+      "matches": 3,
+      "dropped_non_us": 1,
+      "locations_resolved": 0,
+      "with_posted_band": 0,
+      "status": "ok"
+    },
+    "initech": {
+      "company": "Initech",
+      "platform": "greenhouse",
+      "live": 95,
+      "matches": 2,
+      "dropped_non_us": 0,
+      "locations_resolved": 0,
+      "with_posted_band": 2,
+      "status": "ok"
+    },
+    "umbrella": {
+      "company": "Umbrella Media",
+      "platform": "workday",
+      "live": 140,
+      "matches": 1,
+      "dropped_non_us": 1,
+      "locations_resolved": 1,
+      "with_posted_band": 1,
+      "status": "ok"
+    },
+    "hooli": {
+      "company": "Hooli",
+      "platform": "greenhouse",
+      "live": 0,
+      "matches": 0,
+      "dropped_non_us": 0,
+      "locations_resolved": 0,
+      "with_posted_band": 0,
+      "status": "ok"
+    }
+  },
+  "jobs": {
+    "greenhouse:acme:100": {
+      "id": "greenhouse:acme:100",
+      "board": "acme",
+      "company": "Acme Cloud",
+      "title": "DDoS Mitigation Engineer",
+      "location": "Denver, CO",
+      "url": "https://example.com/jobs/100",
+      "terms": [
+        "ddos"
+      ],
+      "flags": [],
+      "pay_low": 250000,
+      "pay_high": 310000,
+      "first_seen": "2026-04-02T09:00:00+00:00",
+      "last_seen": "2026-04-02T09:00:00+00:00",
+      "skills": [
+        "ddos"
+      ],
+      "jd_seen": true
+    },
+    "greenhouse:acme:101": {
+      "id": "greenhouse:acme:101",
+      "board": "acme",
+      "company": "Acme Cloud",
+      "title": "Anomaly Detection Engineer",
+      "location": "Denver, CO",
+      "url": "https://example.com/jobs/101",
+      "terms": [
+        "detection"
+      ],
+      "flags": [],
+      "pay_low": 230000,
+      "pay_high": 290000,
+      "first_seen": "2026-04-02T09:00:00+00:00",
+      "last_seen": "2026-04-02T09:00:00+00:00",
+      "skills": [],
+      "jd_seen": true
+    },
+    "greenhouse:acme:102": {
+      "id": "greenhouse:acme:102",
+      "board": "acme",
+      "company": "Acme Cloud",
+      "title": "Perimeter Platform Engineer",
+      "location": "Remote, US",
+      "url": "https://example.com/jobs/102",
+      "terms": [
+        "perimeter"
+      ],
+      "flags": [],
+      "pay_low": 220000,
+      "pay_high": 270000,
+      "first_seen": "2026-04-02T09:00:00+00:00",
+      "last_seen": "2026-04-02T09:00:00+00:00",
+      "skills": [],
+      "jd_seen": true
+    },
+    "greenhouse:acme:103": {
+      "id": "greenhouse:acme:103",
+      "board": "acme",
+      "company": "Acme Cloud",
+      "title": "Incident Response Engineer",
+      "location": "Chicago, IL",
+      "url": "https://example.com/jobs/103",
+      "terms": [
+        "incident response"
+      ],
+      "flags": [],
+      "pay_low": 190000,
+      "pay_high": 240000,
+      "first_seen": "2026-04-02T09:00:00+00:00",
+      "last_seen": "2026-04-02T09:00:00+00:00",
+      "skills": [
+        "incident_response"
+      ],
+      "jd_seen": true
+    },
+    "greenhouse:acme:104": {
+      "id": "greenhouse:acme:104",
+      "board": "acme",
+      "company": "Acme Cloud",
+      "title": "Software Engineer, Detection Telemetry",
+      "location": "Remote, US",
+      "url": "https://example.com/jobs/104",
+      "terms": [
+        "detection"
+      ],
+      "flags": [
+        "sde-signal"
+      ],
+      "pay_low": 210000,
+      "pay_high": 260000,
+      "first_seen": "2026-04-02T09:00:00+00:00",
+      "last_seen": "2026-04-02T09:00:00+00:00",
+      "skills": [],
+      "jd_seen": true
+    },
+    "workday:northwind:105": {
+      "id": "workday:northwind:105",
+      "board": "northwind",
+      "company": "Northwind Systems",
+      "title": "WAF Platform Engineer",
+      "location": "3 Locations",
+      "url": "https://example.com/jobs/105",
+      "terms": [
+        "waf"
+      ],
+      "flags": [],
+      "pay_low": 180000,
+      "pay_high": 220000,
+      "first_seen": "2026-04-02T09:00:00+00:00",
+      "last_seen": "2026-04-02T09:00:00+00:00",
+      "skills": [],
+      "jd_seen": true
+    },
+    "workday:northwind:106": {
+      "id": "workday:northwind:106",
+      "board": "northwind",
+      "company": "Northwind Systems",
+      "title": "Software Engineer, Traffic Integrity",
+      "location": "2 Locations",
+      "url": "https://example.com/jobs/106",
+      "terms": [
+        "traffic"
+      ],
+      "flags": [
+        "sde-signal"
+      ],
+      "pay_low": 200000,
+      "pay_high": 250000,
+      "first_seen": "2026-04-02T09:00:00+00:00",
+      "last_seen": "2026-04-02T09:00:00+00:00",
+      "skills": [],
+      "jd_seen": true
+    },
+    "workday:northwind:107": {
+      "id": "workday:northwind:107",
+      "board": "northwind",
+      "company": "Northwind Systems",
+      "title": "Threat Research Engineer",
+      "location": "US, IL, Chicago; US, CO, Remote",
+      "url": "https://example.com/jobs/107",
+      "terms": [
+        "threat"
+      ],
+      "flags": [],
+      "pay_low": 170000,
+      "pay_high": 215000,
+      "first_seen": "2026-04-02T09:00:00+00:00",
+      "last_seen": "2026-04-02T09:00:00+00:00",
+      "skills": [
+        "threat_intel"
+      ],
+      "jd_seen": true
+    },
+    "workday:northwind:108": {
+      "id": "workday:northwind:108",
+      "board": "northwind",
+      "company": "Northwind Systems",
+      "title": "Botnet and Malware Analyst",
+      "location": "USA - Remote",
+      "url": "https://example.com/jobs/108",
+      "terms": [
+        "botnet"
+      ],
+      "flags": [],
+      "pay_low": null,
+      "pay_high": null,
+      "first_seen": "2026-04-02T09:00:00+00:00",
+      "last_seen": "2026-04-02T09:00:00+00:00",
+      "skills": [
+        "ddos"
+      ],
+      "jd_seen": true
+    },
+    "ashby:globex:109": {
+      "id": "ashby:globex:109",
+      "board": "globex",
+      "company": "Globex Networks",
+      "title": "Detection and Response Engineer",
+      "location": "Portland, OR; US - Remote",
+      "url": "https://example.com/jobs/109",
+      "terms": [
+        "detection"
+      ],
+      "flags": [],
+      "pay_low": null,
+      "pay_high": null,
+      "first_seen": "2026-04-02T09:00:00+00:00",
+      "last_seen": "2026-04-02T09:00:00+00:00",
+      "skills": [],
+      "jd_seen": true
+    },
+    "ashby:globex:110": {
+      "id": "ashby:globex:110",
+      "board": "globex",
+      "company": "Globex Networks",
+      "title": "Abuse Prevention Researcher",
+      "location": "Portland, OR",
+      "url": "https://example.com/jobs/110",
+      "terms": [
+        "abuse"
+      ],
+      "flags": [],
+      "pay_low": null,
+      "pay_high": null,
+      "first_seen": "2026-04-02T09:00:00+00:00",
+      "last_seen": "2026-04-02T09:00:00+00:00",
+      "skills": [],
+      "jd_seen": true
+    },
+    "ashby:globex:111": {
+      "id": "ashby:globex:111",
+      "board": "globex",
+      "company": "Globex Networks",
+      "title": "Security Researcher, Agentic AI Threats",
+      "location": "Portland, OR",
+      "url": "https://example.com/jobs/111",
+      "terms": [
+        "threats"
+      ],
+      "flags": [],
+      "pay_low": null,
+      "pay_high": null,
+      "first_seen": "2026-04-02T09:00:00+00:00",
+      "last_seen": "2026-04-02T09:00:00+00:00",
+      "skills": [],
+      "jd_seen": true
+    },
+    "greenhouse:initech:112": {
+      "id": "greenhouse:initech:112",
+      "board": "initech",
+      "company": "Initech",
+      "title": "Threat Hunting Engineer",
+      "location": "Boston, MA",
+      "url": "https://example.com/jobs/112",
+      "terms": [
+        "threat"
+      ],
+      "flags": [],
+      "pay_low": 200000,
+      "pay_high": 240000,
+      "first_seen": "2026-04-02T09:00:00+00:00",
+      "last_seen": "2026-04-02T09:00:00+00:00",
+      "skills": [
+        "threat_intel"
+      ],
+      "jd_seen": true
+    },
+    "greenhouse:initech:113": {
+      "id": "greenhouse:initech:113",
+      "board": "initech",
+      "company": "Initech",
+      "title": "Senior Incident Response Analyst",
+      "location": "United States",
+      "url": "https://example.com/jobs/113",
+      "terms": [
+        "incident response"
+      ],
+      "flags": [],
+      "pay_low": 195000,
+      "pay_high": 235000,
+      "first_seen": "2026-04-02T09:00:00+00:00",
+      "last_seen": "2026-04-02T09:00:00+00:00",
+      "skills": [
+        "incident_response"
+      ],
+      "jd_seen": true
+    },
+    "workday:umbrella:114": {
+      "id": "workday:umbrella:114",
+      "board": "umbrella",
+      "company": "Umbrella Media",
+      "title": "Edge Network Security Engineer",
+      "location": "2 Locations",
+      "url": "https://example.com/jobs/114",
+      "terms": [
+        "edge",
+        "network security"
+      ],
+      "flags": [],
+      "pay_low": 185000,
+      "pay_high": 225000,
+      "first_seen": "2026-04-02T09:00:00+00:00",
+      "last_seen": "2026-04-02T09:00:00+00:00",
+      "skills": [],
+      "jd_seen": true
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "updated": "2026-04-02",
+  "note": "Synthetic sample. In real use this file is hand maintained from confirmation mail.",
+  "applications": [
+    {
+      "company": "Acme Cloud",
+      "title": "DDoS Mitigation Engineer",
+      "match": "DDoS Mitigation Engineer",
+      "status": "accepted",
+      "note": "Moved to a screening call."
+    },
+    {
+      "company": "Initech",
+      "title": "Threat Hunting Engineer",
+      "match": "Threat Hunting Engineer",
+      "status": "confirmed",
+      "note": ""
+    },
+    {
+      "company": "Globex Networks",
+      "title": "Detection and Response Engineer",
+      "match": "Detection and Response Engineer",
+      "status": "rejected",
+      "note": "Declined at review stage."
+    },
+    {
+      "company": "Umbrella Media",
+      "title": "Role not identified",
+      "match": null,
+      "status": "unconfirmed",
+      "note": "Live req but no confirmation mail arrived. Verify the submission landed."
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+site/
+history/
+jobwatch_state.json
+applications.json
+jobwatch_report.md
+jobwatch_issue.md
+jobwatch_run.log
+jobwatch_agent.log
+.slug
+dismissed.json
+organizations.json
