@@ -13,7 +13,7 @@ So the first goal was simply **every relevant req in one place, from the source,
 
 The second goal is the one this is really building toward: an **agentic system that reads each req's
 description against my own CV, scores the fit, and adjusts the resume for that specific req on the
-fly**. Everything here is groundwork for that. The competency classification exists so a req can be
+fly**. `tailor.py` is that half. The competency classification exists so a req can be
 routed to the right CV variant automatically. The posted band is captured so comp can gate the
 decision before a human spends time on it. The stable ids and the diff exist so an agent can act on
 transitions rather than re-reading the whole board every day.
@@ -40,6 +40,7 @@ Organisations with no polled board keep a card and a live search, so nothing on 
   the market asks for is measured rather than assumed.
 - Classifies each org by **industry** (closed 20-value set) and rolls that up to a **sector**.
 - Drops reqs the board confirms are outside the US.
+- **Scores a req against a CV** and names the gaps, then **reorders that CV** so the top third matches the posting. Comp and location gate that work. It invents nothing.
 - **Multi-select filters**: any selection within a row, all rows together.
 - **Hide a req** you do not want. Stored in localStorage, with an export to a committed
   `dismissed.json` so the decision survives a browser reset and reaches other devices.
@@ -141,6 +142,73 @@ python3 jobwatch.py --probe         # raw shape of one record per board, for whe
 State lives in `jobwatch_state.json` beside the script. The first `--diff` run has nothing to
 compare against, so it reports every match as new and says so.
 
+### Scoring and tailoring a req
+
+The poller is the first half. `tailor.py` is the second: it reads the **full job
+description**, scores it against a CV, picks the variant the competency map already
+points at, and emits a reordered draft. **Comp and location are gated first**, with
+the same functions the poller and the page use, so a role that was never viable is
+not tailored.
+
+It **invents nothing**. The draft is a reordering of sentences that already exist in
+the CV. Every number, date, title and skill in the output has to be traceable to that
+file. Requirements the CV does not meet are listed as gaps and labelled `not in CV`.
+They are never phrased around.
+
+It still never applies to anything, never creates an account, never logs in, and
+holds no credentials.
+
+```bash
+# Fixture req from saved state. Needs the sample files above, plus a CV directory.
+python3 tailor.py \
+  --state examples/jobwatch_state.sample.json \
+  --orgs examples/organizations.sample.json \
+  --req greenhouse:acme:100 \
+  --jd-dir examples/jds \
+  --cv-dir examples/cvs
+
+# Same work from a JD file and a CV file, no state involved.
+python3 tailor.py \
+  --jd examples/jds/greenhouse_acme_100.md \
+  --cv-dir examples/cvs \
+  --title "DDoS Mitigation Engineer" \
+  --company "Acme Cloud" \
+  --location "Denver, CO" \
+  --pay-low 250000 --pay-high 310000 \
+  --amazon-equiv L6
+
+python3 tailor.py --new --state jobwatch_state.json --orgs organizations.json \
+  --cv-dir cvs --jd-dir jds          # every req first seen on the last run
+python3 tailor.py --list-reqs --state examples/jobwatch_state.sample.json
+python3 tailor.py --jd examples/jds/gaps.md --cv examples/cvs/dr.md \
+  --title "Detection Engineer" --location "Remote, US" --json
+```
+
+`--cv-dir` is a folder of markdown files named for the variant keys in `taxonomy.py`
+(`edge_ddos.md`, `dr.md`, `waf_edge.md`, `ai_sec.md`, `general.md`). `--cv` pins a
+single file instead. The competency map still reports which variant it would have
+picked.
+
+A non-viable req prints the failed gate and **skips the draft**. Confirmed non-US,
+a down-level, or a posted base high below `MIN_POSTED_BASE_HIGH` in `taxonomy.py`
+are the three skips. Missing band and unresolved level stay viable, same as the
+page. `--force` scores anyway; it does not hide the failed gate.
+
+`--json` emits the score, the gap list, the chosen variant, and the draft as one
+object. `--out` writes the draft to a file.
+
+The poller now keeps `jd_text` on each match when the ATS returned a description,
+so a later `tailor.py --req` can read it from state without fetching again. Fixture
+JDs in `examples/jds/` stand in when the sample state has none.
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+The tests cover scoring honesty (gaps must surface, and the SKILLS `gap` band is
+not used as a shortcut), gating (non-viable reqs skip tailoring), and invent-nothing
+(every claim in a draft is in the source CV). Sample CVs and JDs only. No secrets.
+
 ## Configuring it
 
 | File | Holds | Committed |
@@ -149,12 +217,16 @@ compare against, so it reports every match as new and says so.
 | `organizations.json` | Org strategy: fit, industry, why, market comp, level mapping | your own, gitignored here |
 | `applications.json` | Where each application stands | your own, gitignored here |
 | `dismissed.json` | Reqs hidden permanently | your own, gitignored here |
+| `examples/cvs/` | Sample CV variants, one markdown file per variant key | yes |
+| `examples/jds/` | Sample job descriptions | yes |
 
-Samples for all three are in `examples/`. Copy them to the project root to see the demo page.
+Samples for the gitignored files are in `examples/`. Copy them to the project root to see the demo page.
 
-`taxonomy.py` is the single home for vocabulary so the poller and the renderer cannot drift.
-Replace the `REPLACE_WITH_YOUR_*_CV_FILE_ID` placeholders with your own document ids, and set
-`SITE_CITY` in `render_site.py`.
+`taxonomy.py` is the single home for vocabulary so the poller, the renderer and the
+tailor cannot drift. Replace the `REPLACE_WITH_YOUR_*_CV_FILE_ID` placeholders with
+your own document ids, and set `SITE_CITY` in `render_site.py`. Local markdown CVs
+for `tailor.py` live next to the script, one file per variant key; they are not
+the Drive ids.
 
 Adding a board is one dict:
 
@@ -212,7 +284,11 @@ The poller is the boring half. The part I actually want is an agent that, for ea
 5. Gates on comp and location before any of that work happens, so it never tailors a CV for a role
    that was never viable.
 
-Steps 3 and 5 exist here already. Steps 1, 2 and 4 are the open work.
+`tailor.py` is that agent, as a CLI next to the poller rather than as a hosted
+service. It operates on saved state plus a CV file. It still does not apply,
+does not log in, and does not hold credentials. What remains is wiring it to
+the daily run so a new req that survives the gate produces a draft without
+being asked.
 
 ## License
 

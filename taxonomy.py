@@ -180,6 +180,25 @@ NON_US_ABBREV = (   'uk',
     'chn',
     'zaf')
 
+NON_US_RE = re.compile(
+    "|".join(
+        [r"\b" + r"\s+".join(re.escape(w) for w in m.split()) + r"\b" for m in NON_US_MARKERS]
+        + [r"\b" + re.escape(a) + r"\b" for a in NON_US_ABBREV]
+    ),
+    re.IGNORECASE,
+)
+
+# Drop reqs that are confirmably outside the US. Set False to see everything.
+# Only confirmed non-US reqs are dropped; a board that will not say where the job
+# is keeps its req, because dropping unknowns would lose real US roles.
+US_ONLY = True
+
+
+def is_non_us(title, location):
+    """True only when the board states a location we can confirm is outside the US."""
+    return bool(NON_US_RE.search("{} {}".format(title or "", location or "")))
+
+
 GENERIC_LOCATIONS = frozenset({   'flexible',
               'hybrid',
               'in office',
@@ -252,6 +271,21 @@ COMPETENCIES = (   {   'cv': 'waf_edge',
         'terms': ('abuse', 'fraud', 'account takeover', 'trust and safety', 'safety')})
 
 FALLBACK_COMPETENCY = {'cv': 'general', 'key': 'general', 'label': 'Security engineering, unclassified', 'terms': ()}
+
+
+def competency_for(title):
+    """Classify a title into exactly one competency. First match wins.
+
+    Title only, on purpose: the page and the tailor have to agree on which CV
+    variant a req routes to, and the poller never had the JD at classify time.
+    Pass the JD in only when there is no title.
+    """
+    lowered = (title or "").lower()
+    for competency in COMPETENCIES:
+        if any(term in lowered for term in competency["terms"]):
+            return competency
+    return FALLBACK_COMPETENCY
+
 
 TIER_RARE = ('ddos', 'denial of service', 'botnet', 'sirt', 'waf', 'perimeter')
 
@@ -443,6 +477,83 @@ LEVEL_MOVE_LABELS = {
 # Down-level is gated: excluded from the default view, reachable only on request.
 GATED_LEVEL_MOVES = ("down",)
 
+# Posted BASE high below this is not a viable senior role for this profile.
+# Missing band is not a skip — same policy as an unresolved location.
+# The number is a profile judgement, the same kind as HOME_LEVEL.
+MIN_POSTED_BASE_HIGH = 160000
+
+
+def gate_req(req, org=None, us_only=None, min_posted_base_high=None):
+    """Return a viability verdict. Unknowns stay viable; confirmed fails skip.
+
+    Location: confirmed non-US is a fail (same as the poller).
+    Level: a down-level is a fail (same as the page's default view).
+    Comp: a posted BASE high below the floor is a fail. Missing band is not.
+    The posted number is base only and is never compared to a total-comp median.
+    """
+    if us_only is None:
+        us_only = US_ONLY
+    if min_posted_base_high is None:
+        min_posted_base_high = MIN_POSTED_BASE_HIGH
+
+    title = (req or {}).get("title") or ""
+    location = (req or {}).get("location") or ""
+    checks = []
+
+    if us_only and is_non_us(title, location):
+        checks.append({
+            "gate": "location",
+            "ok": False,
+            "detail": "confirmed non-US: {}".format(location or title),
+        })
+    else:
+        checks.append({
+            "gate": "location",
+            "ok": True,
+            "detail": location or "not stated",
+        })
+
+    amazon_equiv = (req or {}).get("amazon_equiv")
+    if not amazon_equiv and org:
+        amazon_equiv = (org.get("comp") or {}).get("amazon_equiv")
+    move = level_move(amazon_equiv)
+    if move in GATED_LEVEL_MOVES:
+        checks.append({
+            "gate": "level",
+            "ok": False,
+            "detail": "down-level ({})".format(amazon_equiv),
+        })
+    else:
+        checks.append({
+            "gate": "level",
+            "ok": True,
+            "detail": LEVEL_MOVE_LABELS.get(move, move),
+        })
+
+    pay_low = (req or {}).get("pay_low")
+    pay_high = (req or {}).get("pay_high")
+    if pay_high is not None and min_posted_base_high is not None and pay_high < min_posted_base_high:
+        checks.append({
+            "gate": "comp",
+            "ok": False,
+            "detail": "${:,} posted high, base only, below ${:,} floor".format(
+                pay_high, min_posted_base_high),
+        })
+    elif pay_high is not None:
+        if pay_low:
+            detail = "${:,}–${:,} base only".format(pay_low, pay_high)
+        else:
+            detail = "${:,} posted high, base only".format(pay_high)
+        checks.append({"gate": "comp", "ok": True, "detail": detail})
+    else:
+        checks.append({"gate": "comp", "ok": True, "detail": "no posted band"})
+
+    return {
+        "viable": all(check["ok"] for check in checks),
+        "checks": checks,
+    }
+
+
 # ---------------------------------------------------------------- skills demand
 # What the market asks for, counted across live job descriptions.
 #
@@ -510,6 +621,27 @@ def detect_skills(text):
     if not text:
         return []
     return [key for key, rx in SKILL_RE.items() if rx.search(text)]
+
+
+def detect_skill_hits(text):
+    """Like detect_skills, but keeps the posting's own matched wording.
+
+    A gap report can quote the JD rather than our label, so it names the miss
+    instead of phrasing around it.
+    """
+    if not text:
+        return []
+    hits = []
+    for skill in SKILLS:
+        match = SKILL_RE[skill["key"]].search(text)
+        if match:
+            hits.append({
+                "key": skill["key"],
+                "label": skill["label"],
+                "band": skill["band"],
+                "evidence": match.group(0),
+            })
+    return hits
 
 
 # Org-level fit gauge, drawn as a link-utilisation bar like the req signal gauge.

@@ -29,14 +29,9 @@ from taxonomy import (  # noqa: E402 - constants live in one place now
     FLAG_TERMS,
     GENERIC_LOCATIONS,
     INCLUDE_TERMS,
-    NON_US_ABBREV,
-    NON_US_MARKERS,
+    US_ONLY,
+    is_non_us,
 )
-
-# Drop reqs that are confirmably outside the US. Set False to see everything.
-# Only confirmed non-US reqs are dropped; a board that will not say where the job
-# is keeps its req, because dropping unknowns would lose real US roles.
-US_ONLY = True
 
 # --------------------------------------------------------------------------
 # HTTP
@@ -76,12 +71,6 @@ def build_matcher(terms):
     pattern = r"\b(?:" + "|".join(parts) + r")(?:s|es|ship|ships)?\b"
     return re.compile(pattern, re.IGNORECASE)
 
-
-NON_US_RE = re.compile(
-    "|".join([r"\b" + r"\s+".join(re.escape(w) for w in m.split()) + r"\b" for m in NON_US_MARKERS]
-             + [r"\b" + re.escape(a) + r"\b" for a in NON_US_ABBREV]),
-    re.IGNORECASE,
-)
 
 INCLUDE_RE = build_matcher(INCLUDE_TERMS)
 EXCLUDE_RE = build_matcher(EXCLUDE_TERMS)
@@ -137,7 +126,12 @@ def enrich_greenhouse(session, board, record):
         response = session.get(url, timeout=TIMEOUT)
         response.raise_for_status()
         text = strip_html(response.json().get("content"))
-        return {"pay": parse_pay(text), "skills": detect_skills(text), "jd": bool(text)}
+        return {
+            "pay": parse_pay(text),
+            "skills": detect_skills(text),
+            "jd": bool(text),
+            "jd_text": text,
+        }
     except Exception:  # noqa: BLE001 - enrichment must never break the poll
         return {}
 
@@ -161,6 +155,7 @@ def enrich_workday(session, board, record):
         "pay": parse_pay(text),
         "skills": detect_skills(text),
         "jd": bool(text),
+        "jd_text": text,
     }
 
 
@@ -169,11 +164,6 @@ def safe_url(url):
     compromised board cannot land a javascript: URL in the rendered page."""
     url = (url or "").strip()
     return url if url.lower().startswith(("http://", "https://")) else ""
-
-
-def is_non_us(title, location):
-    """True only when the board states a location we can confirm is outside the US."""
-    return bool(NON_US_RE.search("{} {}".format(title or "", location or "")))
 
 
 def classify(title):
@@ -426,7 +416,7 @@ def poll(boards, verbose=True):
                 time.sleep(PAGE_PAUSE)
             elif board["platform"] == "ashby":
                 text = record.get("jd_text") or ""
-                extra = {"skills": detect_skills(text), "jd": bool(text)}
+                extra = {"skills": detect_skills(text), "jd": bool(text), "jd_text": text}
             pay = extra.get("pay")
             if pay:
                 priced += 1
@@ -452,6 +442,7 @@ def poll(boards, verbose=True):
                 "pay_high": pay[1] if pay else None,
                 "skills": sorted(skills),
                 "jd_seen": jd_seen,
+                "jd_text": extra.get("jd_text") or "",
             }
             kept += 1
         ok_slugs.append(slug)

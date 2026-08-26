@@ -45,26 +45,11 @@ from taxonomy import (  # noqa: E402 - constants live in one place now
     TIER_RARE,
     TIER_WIDE,
     US,
+    competency_for,
     level_move,
 )
 
 COMPETENCY_BY_KEY = {c["key"]: c for c in COMPETENCIES}
-FALLBACK_COMPETENCY = {
-    "key": "general",
-    "label": "Security engineering, unclassified",
-    "cv": "general",
-    "terms": (),
-}
-
-
-def competency_for(title):
-    """Classify a title into exactly one competency. First match wins."""
-    lowered = (title or "").lower()
-    for competency in COMPETENCIES:
-        if any(term in lowered for term in competency["terms"]):
-            return competency
-    return FALLBACK_COMPETENCY
-
 
 TIER_META = {
     "rare": {"bar": "████████", "label": "Names the discipline", "rank": 3},
