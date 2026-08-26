@@ -556,3 +556,112 @@ def geo_note(text):
             out.append(note)
     return out[:2]
 
+
+# --------------------------------------------------------------------------
+# Applying: gates and settings used by apply.py
+# --------------------------------------------------------------------------
+
+ELIGIBILITY_BARS = ("u.s. citizen", "us citizen", "citizenship required",
+                    "must be a citizen", "must be a u.s. citizen",
+                    "security clearance", "active clearance", "ts/sci", "sci ")
+
+ELIGIBILITY_FLAGS = (
+    ("fedramp", "FedRAMP is not itself a citizenship rule. Most offerings require a US Person, "
+                "which an LPR satisfies, but some agencies and DoD impact levels require a "
+                "citizen. Ask before investing in the loop."),
+    ("public trust", "Public Trust is usually a citizenship requirement in practice, though some "
+                     "contractor positions accept an LPR. Treat as a real question."),
+    ("itar", "An LPR is a US Person under ITAR. Not a bar."),
+    ("export control", "An LPR is a US Person under the EAR. Not a bar."),
+    ("us person", "An LPR is a US Person. Not a bar."),
+    ("u.s. person", "An LPR is a US Person. Not a bar."),
+    ("no sponsorship", "No sponsorship needed. Not a bar."),
+    ("green card holder only", "Satisfied. Not a bar."),
+)
+
+# Your home metro, lower case. Used to tell an onsite role you can take from one
+# that would need a move. Leave empty if you are location agnostic.
+HOME_METRO = ()
+# Matched against the location field. A bare "remote" anywhere in the body is not
+# evidence: a Fastly req listing Denver, New York and San Francisco was classified
+# remote because the word appears in its benefits copy.
+REMOTE_TERMS = ("remote", "distributed", "work from anywhere")
+# Matched against the body, where only an explicit statement counts.
+REMOTE_PHRASES = ("fully remote", "us remote", "remote within the us", "u.s. remote",
+                  "remote-first", "work from anywhere in the us")
+ONSITE_TERMS = ("from the office full time", "onsite full time", "in office five days",
+                "fully onsite", "on-site full time", "4 days a week in office",
+                "5 days a week in office")
+RELOCATION_BARS = ("relocate on their own", "relocation is not provided",
+                   "no relocation assistance", "relocation not offered",
+                   "at their own expense", "must be local to")
+
+REMOTE_TERMS = ("remote", "distributed", "work from anywhere")
+# Matched against the body, where only an explicit statement counts.
+REMOTE_PHRASES = ("fully remote", "us remote", "remote within the us", "u.s. remote",
+                  "remote-first", "work from anywhere in the us")
+ONSITE_TERMS = ("from the office full time", "onsite full time", "in office five days",
+                "fully onsite", "on-site full time", "4 days a week in office",
+                "5 days a week in office")
+RELOCATION_BARS = ("relocate on their own", "relocation is not provided",
+                   "no relocation assistance", "relocation not offered",
+                   "at their own expense", "must be local to")
+
+REMOTE_PHRASES = ("fully remote", "us remote", "remote within the us", "u.s. remote",
+                  "remote-first", "work from anywhere in the us")
+ONSITE_TERMS = ("from the office full time", "onsite full time", "in office five days",
+                "fully onsite", "on-site full time", "4 days a week in office",
+                "5 days a week in office")
+RELOCATION_BARS = ("relocate on their own", "relocation is not provided",
+                   "no relocation assistance", "relocation not offered",
+                   "at their own expense", "must be local to")
+
+ONSITE_TERMS = ("from the office full time", "onsite full time", "in office five days",
+                "fully onsite", "on-site full time", "4 days a week in office",
+                "5 days a week in office")
+RELOCATION_BARS = ("relocate on their own", "relocation is not provided",
+                   "no relocation assistance", "relocation not offered",
+                   "at their own expense", "must be local to")
+
+RELOCATION_BARS = ("relocate on their own", "relocation is not provided",
+                   "no relocation assistance", "relocation not offered",
+                   "at their own expense", "must be local to")
+
+URGENCY_TERMS = ("immediate", "immediately", "asap", "as soon as possible", "urgently",
+                 "urgent need", "backfill", "start right away", "hit the ground running")
+
+JUNIOR_TERMS = ("junior", "jr.", "associate", "new grad", "graduate", "entry level",
+                "intern", "apprentice", "engineer i", "engineer ii", "level 1", "tier 1")
+
+EQUITY_TERMS = ("equity", "rsu", "restricted stock", "stock option", "stock grant",
+                "long-term incentive", "lti")
+BASE_FLOOR = 250000
+
+BASE_FLOOR = 250000
+
+FIXED_GAPS = (
+    ("reverse engineering", "ghidra", "ida pro", "ida ", "disassembl", "stripped binar",
+     "malware analysis", "binary analysis of"),
+    ("Binary reverse engineering is a real gap: no Ghidra, IDA, or stripped multi-arch "
+     "binary work. The vantage point is network and C2 telemetry instead, which answers "
+     "many of the same questions from a different angle."),
+)
+SDE_TELL = (
+    ("golang", " go ", "c++", "rust", "java ", "kafka", "spark", "flink", "scala"),
+    ("The posting demands a compiled language or a streaming stack with a year count, "
+     "which usually means an SDE seat wearing security vocabulary. Read the day-to-day "
+     "before investing."),
+)
+
+SDE_TELL = (
+    ("golang", " go ", "c++", "rust", "java ", "kafka", "spark", "flink", "scala"),
+    ("The posting demands a compiled language or a streaming stack with a year count, "
+     "which usually means an SDE seat wearing security vocabulary. Read the day-to-day "
+     "before investing."),
+)
+
+FIXED_TITLE = "Senior Security Engineer"
+
+# Companies where a referral is worth more than a portal submission. A req here
+# still gets a full packet; it is just marked as needing a warm introduction.
+NEVER_AUTO = ()
