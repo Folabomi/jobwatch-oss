@@ -1,0 +1,136 @@
+{
+  "polled": "2026-10-16T18:00:00Z",
+  "source": "jobwatch.poll public fields only; no applications, JD text, or PII",
+  "boards_ok": ["cloudflare", "openai", "netflix", "crowdstrike"],
+  "match_count": 16,
+  "postings": [
+    {
+      "id": "greenhouse:cloudflare:5891234",
+      "board": "cloudflare",
+      "company": "Cloudflare",
+      "title": "Zero Trust Workers Engineer",
+      "location": "Austin, TX; SF Bay Area; Remote - Americas",
+      "url": "https://boards.greenhouse.io/cloudflare/jobs/5891234"
+    },
+    {
+      "id": "greenhouse:cloudflare:5891235",
+      "board": "cloudflare",
+      "company": "Cloudflare",
+      "title": "Identity Platform Engineer",
+      "location": "San Francisco, CA",
+      "url": "https://boards.greenhouse.io/cloudflare/jobs/5891235"
+    },
+    {
+      "id": "greenhouse:cloudflare:5891236",
+      "board": "cloudflare",
+      "company": "Cloudflare",
+      "title": "Payments Infrastructure Engineer",
+      "location": "Remote US",
+      "url": "https://job-boards.greenhouse.io/cloudflare/jobs/5891236"
+    },
+    {
+      "id": "ashby:openai:6f8c2e1a-4b3d-4c2a-9f1e-8a7b6c5d4e3f",
+      "board": "openai",
+      "company": "OpenAI",
+      "title": "Applied AI Engineer",
+      "location": "San Francisco, CA; Remote - Americas",
+      "url": "https://jobs.ashbyhq.com/openai/6f8c2e1a-4b3d-4c2a-9f1e-8a7b6c5d4e3f"
+    },
+    {
+      "id": "ashby:openai:a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "board": "openai",
+      "company": "OpenAI",
+      "title": "ML Infra Engineer",
+      "location": "Seattle, WA",
+      "url": "https://jobs.ashbyhq.com/openai/a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    },
+    {
+      "id": "eightfold:netflix:LOS-GATOS-1",
+      "board": "netflix",
+      "company": "Netflix",
+      "title": "DDoS Detection Engineer",
+      "location": "Los Gatos,California,United States of America",
+      "url": "https://explore.jobs.netflix.net/careers/job/137766666"
+    },
+    {
+      "id": "eightfold:netflix:LOS-GATOS-2",
+      "board": "netflix",
+      "company": "Netflix",
+      "title": "Edge Platform Engineer",
+      "location": "Los Gatos, California, United States of America",
+      "url": "https://explore.jobs.netflix.net/careers/job/137766667"
+    },
+    {
+      "id": "eightfold:netflix:LA-1",
+      "board": "netflix",
+      "company": "Netflix",
+      "title": "Payments Engineer",
+      "location": "Los Angeles,California,United States of America",
+      "url": "https://explore.jobs.netflix.net/careers/job/137766668"
+    },
+    {
+      "id": "workday:crowdstrike:Applied-AI-ML_R12345",
+      "board": "crowdstrike",
+      "company": "CrowdStrike",
+      "title": "Global Programs — Applied AI Engineering",
+      "location": "Remote - Americas",
+      "url": "https://crowdstrike.wd5.myworkdayjobs.com/en-US/crowdstrikecareers/job/Applied-AI-ML_R12345"
+    },
+    {
+      "id": "workday:crowdstrike:DDoS-Mitigation_R12345",
+      "board": "crowdstrike",
+      "company": "CrowdStrike",
+      "title": "DDoS Mitigation Engineer",
+      "location": "Austin, TX",
+      "url": "https://crowdstrike.wd5.myworkdayjobs.com/en-US/crowdstrikecareers/job/DDoS-Mitigation_R12345"
+    },
+    {
+      "id": "workday:crowdstrike:Identity-R20001",
+      "board": "crowdstrike",
+      "company": "CrowdStrike",
+      "title": "Identity Engineer",
+      "location": "Sunnyvale, CA",
+      "url": "https://crowdstrike.wd5.myworkdayjobs.com/en-US/crowdstrikecareers/job/Identity_R20001"
+    },
+    {
+      "id": "greenhouse:cloudflare:5891240",
+      "board": "cloudflare",
+      "company": "Cloudflare",
+      "title": "Workers Platform Engineer",
+      "location": "Denver, CO",
+      "url": "https://boards.greenhouse.io/cloudflare/jobs/5891240"
+    },
+    {
+      "id": "ashby:openai:11111111-2222-3333-4444-555555555555",
+      "board": "openai",
+      "company": "OpenAI",
+      "title": "Threat Detection Engineer",
+      "location": "New York, NY",
+      "url": "https://jobs.ashbyhq.com/openai/11111111-2222-3333-4444-555555555555"
+    },
+    {
+      "id": "eightfold:netflix:REMOTE-1",
+      "board": "netflix",
+      "company": "Netflix",
+      "title": "Network Security Engineer",
+      "location": "Remote,United States of America",
+      "url": "https://explore.jobs.netflix.net/careers/job/137766670"
+    },
+    {
+      "id": "workday:crowdstrike:Zero-Trust_R30001",
+      "board": "crowdstrike",
+      "company": "CrowdStrike",
+      "title": "Zero Trust Engineer",
+      "location": "SF Bay Area",
+      "url": "https://crowdstrike.wd5.myworkdayjobs.com/en-US/crowdstrikecareers/job/Zero-Trust_R30001"
+    },
+    {
+      "id": "greenhouse:cloudflare:5891241",
+      "board": "cloudflare",
+      "company": "Cloudflare",
+      "title": "ML Infra Engineer",
+      "location": "Lisbon, Portugal",
+      "url": "https://boards.greenhouse.io/cloudflare/jobs/5891241"
+    }
+  ]
+}

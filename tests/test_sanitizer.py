@@ -21,7 +21,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import sanitizer
 import taxonomy as tx
-from sanitizer import SanitizerBlocked, sanitize, sanitize_records, scan_public_text
+from sanitizer import (
+    SanitizerBlocked,
+    VocabMiss,
+    check_drop_budget,
+    format_drop_counts,
+    last_drop_counts,
+    reset_drops,
+    sanitize,
+    sanitize_records,
+    scan_public_text,
+)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXAMPLES = os.path.join(ROOT, "examples")
@@ -242,28 +252,23 @@ class CompanyNameAndLabel(unittest.TestCase):
 
 
 class EmailPattern(unittest.TestCase):
-    def test_email_in_free_text_is_redacted(self):
-        cleaned = sanitize(job_with(title="Recruiter wrote back: ada@example.com yesterday."))
-        self.assertNotIn("ada@example.com", cleaned["title"])
-        self.assertIn(sanitizer.REDACTED, cleaned["title"])
+    def test_email_in_free_text_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="Recruiter wrote back: ada@example.com yesterday."))
 
-    def test_email_left_in_place_is_blocked(self):
-        with mock.patch.object(sanitizer, "_redact_text", side_effect=lambda text: text):
-            with self.assertRaises(SanitizerBlocked):
-                sanitize(job_with(title="ada@example.com"))
+    def test_title_without_an_email_passes(self):
+        cleaned = sanitize(job_with(title="Recruiter wrote back yesterday."))
+        self.assertNotIn(sanitizer.REDACTED, cleaned["title"])
 
 
 class PhonePattern(unittest.TestCase):
-    def test_phone_in_free_text_is_redacted(self):
-        cleaned = sanitize(job_with(title="Call me on (206) 555-0100 after 5."))
-        self.assertNotIn("555-0100", cleaned["title"])
-        self.assertNotIn("206", json.dumps(cleaned))
-        self.assertIn(sanitizer.REDACTED, cleaned["title"])
+    def test_phone_in_free_text_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="Call me on (206) 555-0100 after 5."))
 
-    def test_phone_left_in_place_is_blocked(self):
-        with mock.patch.object(sanitizer, "_redact_text", side_effect=lambda text: text):
-            with self.assertRaises(SanitizerBlocked):
-                sanitize(job_with(title="206-555-0100"))
+    def test_title_without_a_phone_passes(self):
+        cleaned = sanitize(job_with(title="Call the hiring desk after 5."))
+        self.assertNotIn(sanitizer.REDACTED, json.dumps(cleaned))
 
 
 class NamePattern(unittest.TestCase):
@@ -274,20 +279,17 @@ class NamePattern(unittest.TestCase):
     def tearDown(self):
         sanitizer.APPLICANT_NAMES[:] = self._names
 
-    def test_applicant_name_in_free_text_is_redacted(self):
-        cleaned = sanitize(job_with(title="Please ask Jane Doe to confirm the slot."))
-        self.assertNotIn("Jane Doe", cleaned["title"])
-        self.assertIn(sanitizer.REDACTED, cleaned["title"])
+    def test_applicant_name_in_free_text_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="Please ask Jane Doe to confirm the slot."))
 
-    def test_labeled_applicant_name_is_redacted(self):
-        cleaned = sanitize(job_with(title="Name: Ada Lovelace on the hiring loop."))
-        self.assertNotIn("Ada Lovelace", cleaned["title"])
-        self.assertIn(sanitizer.REDACTED, cleaned["title"])
+    def test_labeled_applicant_name_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="Name: Ada Lovelace on the hiring loop."))
 
     def test_name_left_in_place_is_blocked(self):
-        with mock.patch.object(sanitizer, "_redact_text", side_effect=lambda text: text):
-            with self.assertRaises(SanitizerBlocked):
-                sanitize(job_with(title="Jane Doe"))
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="Jane Doe"))
 
     def test_company_name_without_a_person_passes(self):
         cleaned = sanitize(job_with(title="DDoS Mitigation Engineer"))
@@ -295,81 +297,67 @@ class NamePattern(unittest.TestCase):
 
 
 class AddressPattern(unittest.TestCase):
-    def test_home_address_in_free_text_is_redacted(self):
-        cleaned = sanitize(job_with(title="I live at 123 Main Street, Seattle, WA 98101."))
-        self.assertNotIn("123 Main Street", cleaned["title"])
-        self.assertNotIn("98101", cleaned["title"])
-        self.assertIn(sanitizer.REDACTED, cleaned["title"])
+    def test_home_address_in_free_text_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="I live at 123 Main Street, Seattle, WA 98101."))
 
     def test_address_left_in_place_is_blocked(self):
-        with mock.patch.object(sanitizer, "_redact_text", side_effect=lambda text: text):
-            with self.assertRaises(SanitizerBlocked):
-                sanitize(job_with(title="123 Main Street"))
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="123 Main Street"))
 
 
 class LinkedInPattern(unittest.TestCase):
-    def test_linkedin_url_in_free_text_is_redacted(self):
-        cleaned = sanitize(job_with(title="Profile: https://www.linkedin.com/in/ada-lovelace"))
-        self.assertNotIn("linkedin.com", cleaned["title"])
-        self.assertNotIn("ada-lovelace", cleaned["title"])
-        self.assertIn(sanitizer.REDACTED, cleaned["title"])
+    def test_linkedin_url_in_free_text_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="Profile: https://www.linkedin.com/in/ada-lovelace"))
 
     def test_linkedin_left_in_place_is_blocked(self):
-        with mock.patch.object(sanitizer, "_redact_text", side_effect=lambda text: text):
-            with self.assertRaises(SanitizerBlocked):
-                sanitize(job_with(title="https://www.linkedin.com/in/ada-lovelace"))
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="https://www.linkedin.com/in/ada-lovelace"))
 
 
 class ProfileUrlPattern(unittest.TestCase):
-    def test_github_profile_url_is_redacted(self):
-        cleaned = sanitize(job_with(title="See https://github.com/adalovelace for older work."))
-        self.assertNotIn("github.com/adalovelace", cleaned["title"])
-        self.assertIn(sanitizer.REDACTED, cleaned["title"])
+    def test_github_profile_url_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="See https://github.com/adalovelace for older work."))
 
     def test_repo_url_is_not_treated_as_a_profile(self):
         cleaned = sanitize(job_with(title="We use https://github.com/acme/edge-filter in production."))
         self.assertIn("github.com/acme/edge-filter", cleaned["title"])
 
     def test_profile_url_left_in_place_is_blocked(self):
-        with mock.patch.object(sanitizer, "_redact_text", side_effect=lambda text: text):
-            with self.assertRaises(SanitizerBlocked):
-                sanitize(job_with(title="https://github.com/adalovelace"))
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="https://github.com/adalovelace"))
 
 
 class TokenPattern(unittest.TestCase):
-    def test_github_pat_is_redacted(self):
-        cleaned = sanitize(job_with(title="do not paste " + GH_PAT + " into a note"))
-        self.assertNotIn(GH_PAT, cleaned["title"])
-        self.assertIn(sanitizer.REDACTED, cleaned["title"])
+    def test_github_pat_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="do not paste " + GH_PAT + " into a note"))
 
-    def test_bearer_token_is_redacted(self):
-        cleaned = sanitize(job_with(title="Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345"))
-        self.assertNotIn("abcdefghijklmnopqrstuvwxyz012345", cleaned["title"])
-        self.assertIn(sanitizer.REDACTED, cleaned["title"])
+    def test_bearer_token_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345"))
 
     def test_token_left_in_place_is_blocked(self):
         token = "ghp_" + ("b" * 36)
-        with mock.patch.object(sanitizer, "_redact_text", side_effect=lambda text: text):
-            with self.assertRaises(SanitizerBlocked):
-                sanitize(job_with(title=token))
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title=token))
 
 
 class ApiKeyPattern(unittest.TestCase):
-    def test_aws_access_key_is_redacted(self):
-        cleaned = sanitize(job_with(title="creds " + AWS_KEY))
-        self.assertNotIn(AWS_KEY, cleaned["title"])
-        self.assertIn(sanitizer.REDACTED, cleaned["title"])
+    def test_aws_access_key_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="creds " + AWS_KEY))
 
-    def test_labeled_api_key_is_redacted(self):
-        cleaned = sanitize(job_with(title="api_key=abcdefghijklmnopQR"))
-        self.assertNotIn("abcdefghijklmnopQR", cleaned["title"])
-        self.assertIn(sanitizer.REDACTED, cleaned["title"])
+    def test_labeled_api_key_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="api_key=abcdefghijklmnopQR"))
 
     def test_api_key_left_in_place_is_blocked(self):
         key = "AKIA" + ("B" * 16)
-        with mock.patch.object(sanitizer, "_redact_text", side_effect=lambda text: text):
-            with self.assertRaises(SanitizerBlocked):
-                sanitize(job_with(title=key))
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title=key))
 
 
 class DenyPassHomoglyph(unittest.TestCase):
@@ -1243,13 +1231,15 @@ class DenyPassOnsiteWhenAndAllowlist(unittest.TestCase):
         with self.assertRaises(SanitizerBlocked):
             sanitize(dict(CLEAN_ORG, locations="Denver \U0001F4C5"))
 
-    def test_team_unknown_token_is_blocked(self):
-        with self.assertRaises(SanitizerBlocked):
+    def test_team_unknown_token_is_a_vocab_miss(self):
+        with self.assertRaises(VocabMiss) as caught:
             sanitize(dict(CLEAN_ORG, team="Zebra Unit"))
+        self.assertEqual(caught.exception.field, "team")
 
-    def test_locations_unknown_city_is_blocked(self):
-        with self.assertRaises(SanitizerBlocked):
+    def test_locations_unknown_city_is_a_vocab_miss(self):
+        with self.assertRaises(VocabMiss) as caught:
             sanitize(dict(CLEAN_ORG, locations="Atlantis"))
+        self.assertEqual(caught.exception.field, "locations")
 
     def test_team_applied_ai_passes(self):
         cleaned = sanitize(dict(CLEAN_ORG, team="Applied AI"))
@@ -1278,6 +1268,163 @@ class DenyPassOnsiteWhenAndAllowlist(unittest.TestCase):
     def test_locations_portland_or_passes(self):
         cleaned = sanitize(dict(CLEAN_ORG, locations="Portland, OR; US Remote"))
         self.assertEqual(cleaned["locations"], "Portland, OR; US Remote")
+
+
+class DenyPassLiveBoardAndDrops(unittest.TestCase):
+    def setUp(self):
+        reset_drops()
+
+    def test_netflix_city_state_country_no_spaces_passes(self):
+        cleaned = sanitize(job_with(
+            company="Netflix",
+            location="Los Gatos,California,United States of America",
+        ))
+        self.assertEqual(cleaned["location"], "Los Gatos,California,United States of America")
+        self.assertNotIn(sanitizer.REDACTED, cleaned["location"])
+
+    def test_netflix_city_state_country_with_spaces_passes(self):
+        cleaned = sanitize(job_with(
+            company="Netflix",
+            location="Los Gatos, California, United States of America",
+        ))
+        self.assertEqual(cleaned["location"], "Los Gatos, California, United States of America")
+
+    def test_workday_applied_ai_ml_slug_passes(self):
+        url = (
+            "https://crowdstrike.wd5.myworkdayjobs.com/en-US/"
+            "crowdstrikecareers/job/Applied-AI-ML_R12345"
+        )
+        cleaned = sanitize(job_with(company="CrowdStrike", url=url))
+        self.assertEqual(cleaned["url"], url)
+
+    def test_ashby_openai_uuid_url_still_passes(self):
+        url = "https://jobs.ashbyhq.com/openai/6f8c2e1a-4b3d-4c2a-9f1e-8a7b6c5d4e3f"
+        cleaned = sanitize(job_with(company="OpenAI", url=url))
+        self.assertEqual(cleaned["url"], url)
+
+    def test_emdash_applied_ai_is_not_a_status(self):
+        cleaned = sanitize(job_with(title="Global Programs \u2014 Applied AI Engineering"))
+        self.assertEqual(cleaned["title"], "Global Programs \u2014 Applied AI Engineering")
+
+    def test_dash_applied_ai_is_not_a_status(self):
+        cleaned = sanitize(job_with(title="Global Programs - Applied AI Engineering"))
+        self.assertEqual(cleaned["title"], "Global Programs - Applied AI Engineering")
+
+    def test_swe_dash_applied_still_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="SWE - applied"))
+
+    def test_swe_final_round_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="SWE final round"))
+
+    def test_swe_takehome_due_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="SWE take-home due"))
+
+    def test_url_payments_onsite_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(url="https://example.com/jobs/Payments(onsite)"))
+
+    def test_title_paren_onsite_still_passes(self):
+        cleaned = sanitize(job_with(title="Software Engineer (Onsite)"))
+        self.assertEqual(cleaned["title"], "Software Engineer (Onsite)")
+
+    def test_redacted_marker_fails_the_page(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="leak " + sanitizer.REDACTED))
+
+    def test_vocab_miss_is_not_sanitizer_blocked(self):
+        with self.assertRaises(VocabMiss):
+            sanitize(job_with(location="Atlantis"))
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="ada@example.com"))
+
+    def test_sanitize_records_drops_unknown_city(self):
+        reset_drops()
+        records = [job_with(id="greenhouse:acme:{}".format(i)) for i in range(10)]
+        records[0] = job_with(id="greenhouse:acme:0", location="Atlantis")
+        kept = sanitize_records(records)
+        self.assertEqual(len(kept), 9)
+        self.assertNotIn(sanitizer.REDACTED, json.dumps(kept))
+        self.assertEqual(last_drop_counts(), {"location": 1})
+        self.assertIn("drops_location=1", format_drop_counts())
+        self.assertNotIn("Atlantis", format_drop_counts())
+
+    def test_pii_still_fails_the_whole_page(self):
+        reset_drops()
+        with self.assertRaises(SanitizerBlocked):
+            sanitize_records([
+                job_with(location="Denver, CO"),
+                job_with(id="greenhouse:acme:101", title="write ada@example.com"),
+            ])
+
+    def test_drop_counts_are_per_field_name(self):
+        reset_drops()
+        records = [job_with(id="greenhouse:acme:{}".format(i)) for i in range(30)]
+        records[0] = job_with(id="greenhouse:acme:0", location="Atlantis")
+        records[1] = job_with(id="greenhouse:acme:1", location="El Dorado")
+        records[2] = dict(CLEAN_ORG, team="Zebra Unit")
+        sanitize_records(records)
+        self.assertEqual(last_drop_counts(), {"location": 2, "team": 1})
+        text = format_drop_counts()
+        self.assertEqual(text, "drops_location=2 drops_team=1")
+        self.assertNotIn("Atlantis", text)
+        self.assertNotIn("Zebra", text)
+
+    def test_drop_rate_over_ten_percent_fails_page(self):
+        reset_drops()
+        records = [job_with(id="greenhouse:acme:{}".format(i)) for i in range(10)]
+        records[0] = job_with(id="greenhouse:acme:0", location="Atlantis")
+        records[1] = job_with(id="greenhouse:acme:1", location="El Dorado")
+        with self.assertRaises(SanitizerBlocked):
+            sanitize_records(records)
+
+    def test_one_drop_in_ten_keeps_the_page(self):
+        reset_drops()
+        records = [job_with(id="greenhouse:acme:{}".format(i)) for i in range(10)]
+        records[0] = job_with(id="greenhouse:acme:0", location="Atlantis")
+        kept = sanitize_records(records)
+        self.assertEqual(len(kept), 9)
+        self.assertEqual(last_drop_counts(), {"location": 1})
+
+    def test_drop_count_over_25_fails_page(self):
+        reset_drops()
+        records = [
+            job_with(id="greenhouse:acme:{}".format(i), location="Denver, CO")
+            for i in range(260)
+        ]
+        for i in range(26):
+            records[i] = job_with(
+                id="greenhouse:acme:{}".format(i),
+                location="Atlantis",
+            )
+        with self.assertRaises(SanitizerBlocked):
+            sanitize_records(records)
+
+    def test_live_fixture_zero_percent_blocked(self):
+        data = fixture_json("live_postings.json")
+        postings = data["postings"]
+        self.assertGreater(len(postings), 0)
+        blocked = 0
+        reset_drops()
+        for index, posting in enumerate(postings):
+            record = job_with(
+                id=posting["id"] or "greenhouse:acme:{}".format(index),
+                board=posting["board"],
+                company=posting["company"],
+                title=posting["title"],
+                location=posting["location"],
+                url=posting["url"],
+            )
+            try:
+                cleaned = sanitize(record)
+            except (SanitizerBlocked, VocabMiss):
+                blocked += 1
+                continue
+            self.assertNotIn(sanitizer.REDACTED, json.dumps(cleaned))
+        self.assertEqual(blocked, 0)
+        self.assertEqual(blocked / float(len(postings)), 0.0)
 
 
 class DeploySiteHold(unittest.TestCase):
@@ -1323,9 +1470,10 @@ TEST_CASES = (
     DenyPassFormatAndBoardNames, DenyPassCommentsAndScript,
     DenyPassDataAndDataset, DeploySiteHold, KnownCompaniesHardcoded,
     DenyPassLeaksAndUrls, DenyPassOnsiteWhenAndAllowlist,
+    DenyPassLiveBoardAndDrops,
 )
 
-EXPECTED_SANITIZER_TESTS = 236
+EXPECTED_SANITIZER_TESTS = 256
 
 
 def _discovered_count():

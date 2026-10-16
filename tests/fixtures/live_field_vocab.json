@@ -1,0 +1,15 @@
+{
+  "source": "Seeded from jobwatch.poll public titles and locations. No applications or PII.",
+  "team": [
+    "applied", "ai", "engineering", "engineer", "global", "programs",
+    "payments", "ml", "infra", "infrastructure", "identity", "workers",
+    "zero", "trust", "platform", "detection", "mitigation", "ddos",
+    "threat", "network", "security", "edge"
+  ],
+  "city": [
+    "los", "gatos", "california", "austin", "tx", "sf", "bay", "area",
+    "remote", "americas", "san", "francisco", "ca", "seattle", "wa",
+    "denver", "co", "sunnyvale", "new", "york", "ny", "lisbon", "portugal",
+    "angeles", "united", "states", "america"
+  ]
+}

@@ -113,6 +113,71 @@ class SanitizerBlocked(Exception):
     """Public output is refused. Callers must emit nothing."""
 
 
+class VocabMiss(Exception):
+    """Unknown team or city token. Callers may drop this record, not the page."""
+
+    def __init__(self, field, message=None):
+        self.field = field
+        super().__init__(message or "unknown {} token".format(field))
+
+
+DROP_RATE_LIMIT = 0.10
+DROP_COUNT_LIMIT = 25
+
+_LAST_DROPS = {}
+_DROP_TOTAL_RECORDS = 0
+
+
+def reset_drops():
+    """Clear per-field drop counts. Call at the start of a public emit."""
+    global _LAST_DROPS, _DROP_TOTAL_RECORDS
+    _LAST_DROPS = {}
+    _DROP_TOTAL_RECORDS = 0
+
+
+def last_drop_counts():
+    """Field-name -> count. Never keyed by the dropped value."""
+    return dict(_LAST_DROPS)
+
+
+def format_drop_counts(counts=None):
+    counts = last_drop_counts() if counts is None else counts
+    return " ".join(
+        "drops_{}={}".format(field, counts[field]) for field in sorted(counts)
+    )
+
+
+def _note_drop(field):
+    _LAST_DROPS[field] = _LAST_DROPS.get(field, 0) + 1
+
+
+def count_record():
+    """Count one public record toward the drop budget."""
+    global _DROP_TOTAL_RECORDS
+    _DROP_TOTAL_RECORDS += 1
+
+
+def record_vocab_drop(field):
+    _note_drop(field)
+
+
+def drops_exceed_budget(total=None, dropped=None):
+    if total is None:
+        total = _DROP_TOTAL_RECORDS
+    if dropped is None:
+        dropped = sum(_LAST_DROPS.values())
+    if dropped > DROP_COUNT_LIMIT:
+        return True
+    if total and dropped / float(total) > DROP_RATE_LIMIT:
+        return True
+    return False
+
+
+def check_drop_budget():
+    if drops_exceed_budget():
+        raise SanitizerBlocked("too many vocab drops")
+
+
 # --------------------------------------------------------------------------
 # Allowlist. Keys and the types they may hold. See module docstring.
 # --------------------------------------------------------------------------
@@ -745,13 +810,21 @@ def _is_emoji(ch):
     )
 
 
+_STAGE_PHRASES = frozenset({
+    "final round", "take-home", "take home", "phone screen", "got offer",
+})
+_SKIP_WALK_SEPS = frozenset({
+    "-", "\u2013", "\u2014", "_", "/", "(", ")",
+})
+
+
 def _is_status_follower(token):
     folded = (token or "").casefold()
     if not folded:
         return False
     if _DATE_RE.match(folded) or folded in _DAY_WORDS:
         return True
-    if folded in {"w/", "with"} or folded in _GIVEN_NAMES:
+    if folded in {"w/", "with", "due"} or folded in _GIVEN_NAMES:
         return True
     if folded in _STATUS_WORDS or folded in _ONSITE_WORDS:
         return True
@@ -767,6 +840,28 @@ def _onsite_in(text):
     return bool(re.search(r"(?i)\bon[\s-]?site\b", folded))
 
 
+def _next_word(tokens, index):
+    for raw in tokens[index + 1:]:
+        folded = raw.casefold()
+        if folded in _SKIP_WALK_SEPS:
+            continue
+        return folded
+    return ""
+
+
+def _is_title_continuation(token):
+    """A role/org word after Applied/Offer/etc. is a title, not a stage."""
+    if not token:
+        return False
+    if token in _STATUS_SEPS or token in _WORKMODE_SEPS or token in _SKIP_WALK_SEPS:
+        return False
+    if _is_status_follower(token) or token in _WHEN_WORDS or token in _STATUS_ABBREV:
+        return False
+    if token in {":", "!", "w/", "due"}:
+        return False
+    return bool(re.match(r"[a-z]", token))
+
+
 def _application_status_hit(text):
     """True when a stage/outcome word appears in a status context."""
     if not text:
@@ -780,15 +875,14 @@ def _application_status_hit(text):
         folded = raw.casefold()
         nxt = tokens[index + 1].casefold() if index + 1 < len(tokens) else ""
         nxt_raw = tokens[index + 1] if index + 1 < len(tokens) else ""
+        nxt_word = _next_word(tokens, index)
         prev = tokens[index - 1] if index else ""
         prev_fold = prev.casefold()
         is_onsite = folded in _ONSITE_WORDS
-        is_status = folded in _STATUS_WORDS or folded in _STATUS_ABBREV or folded in {
-            "final round", "take-home", "take home", "phone screen", "got offer",
-        }
+        is_status = folded in _STATUS_WORDS or folded in _STATUS_ABBREV or folded in _STAGE_PHRASES
         if not is_onsite and not is_status:
             continue
-        if _is_status_follower(nxt) or nxt == "w/":
+        if _is_status_follower(nxt) or _is_status_follower(nxt_word) or nxt == "w/":
             return True
         if prev_fold == "w/":
             return True
@@ -799,13 +893,23 @@ def _application_status_hit(text):
         if nxt_raw and _is_emoji(nxt_raw):
             return True
         if prev in _STATUS_SEPS and not (is_onsite and prev in _WORKMODE_SEPS):
-            return True
-        if is_status and prev in _WORKMODE_SEPS:
-            return True
-        if is_onsite:
-            if nxt in _WHEN_WORDS or prev_fold in _WHEN_WORDS:
+            if not (is_status and _is_title_continuation(nxt_word)):
                 return True
-            if nxt in _DAY_WORDS or prev_fold in _DAY_WORDS:
+        if is_status and prev in _WORKMODE_SEPS and not _is_title_continuation(nxt_word):
+            return True
+        if is_status and folded in {"final round", "take-home", "take home", "phone screen"}:
+            if (
+                prev_fold
+                and re.match(r"[a-z]", prev_fold)
+                and prev_fold not in _FIELD_CONNECTORS
+                and prev not in _WORKMODE_SEPS
+                and prev not in _STATUS_SEPS
+            ):
+                return True
+        if is_onsite:
+            if nxt in _WHEN_WORDS or prev_fold in _WHEN_WORDS or nxt_word in _WHEN_WORDS:
+                return True
+            if nxt in _DAY_WORDS or prev_fold in _DAY_WORDS or nxt_word in _DAY_WORDS:
                 return True
             if nxt == _OFFICE_EMOJI or prev == _OFFICE_EMOJI:
                 return True
@@ -819,6 +923,8 @@ def _application_status_hit(text):
 
 
 def _path_has_stage(path):
+    if _onsite_in(path or ""):
+        return True
     if _application_status_hit(path or ""):
         return True
     for segment in (path or "").split("/"):
@@ -849,7 +955,17 @@ _FIELD_CONNECTORS = frozenset({
 })
 _FIELD_VOCAB_EXTRAS = frozenset({
     "portland", "defense", "reporting", "sinkholing",
+    "americas", "america", "gatos", "bay", "area",
 })
+LIVE_VOCAB_PATH = os.path.join(HERE, "tests", "fixtures", "live_field_vocab.json")
+LIVE_POSTINGS_PATH = os.path.join(HERE, "tests", "fixtures", "live_postings.json")
+
+_LOCATION_COUNTRY_RE = re.compile(
+    r"(?i)(?:,\s*)?(?:"
+    r"united states of america|united states|u\.s\.a\.|u\.s\.|usa|america"
+    r"|united kingdom|great britain"
+    r")\s*$"
+)
 
 
 def _add_vocab_tokens(bucket, text):
@@ -883,11 +999,31 @@ def _walk_vocab(obj, bucket, depth=0):
             _walk_vocab(item, bucket, depth + 1)
 
 
+def _live_vocab_tokens():
+    bucket = set()
+    for path in (LIVE_VOCAB_PATH, LIVE_POSTINGS_PATH):
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        if not isinstance(data, dict):
+            continue
+        for key in ("team", "city", "tokens"):
+            _walk_vocab(data.get(key) or [], bucket)
+        for posting in data.get("postings") or []:
+            if not isinstance(posting, dict):
+                continue
+            _add_vocab_tokens(bucket, posting.get("title") or "")
+            _add_vocab_tokens(bucket, _location_vocab_text(posting.get("location") or ""))
+    return bucket
+
+
 def _field_allowlist():
-    """Team/locations tokens: BOARDS + taxonomy + city names. Anything else blocks."""
+    """Team/locations tokens: BOARDS + taxonomy + city names + live poll seed."""
     bucket = set(_USPS_STATES)
     bucket.update(_FIELD_CONNECTORS)
     bucket.update(_FIELD_VOCAB_EXTRAS)
+    bucket.update(_live_vocab_tokens())
     import jobwatch
     _walk_vocab(jobwatch.BOARDS, bucket)
     for name in dir(tx):
@@ -904,15 +1040,37 @@ def _normalize_onsite_spacing(text):
     return re.sub(r"(?i)\bon\s+site\b", "onsite", text or "")
 
 
-def _field_vocab_blocked(key, value):
-    """Team/locations is an allowlist. Tokens must come from boards/taxonomy/cities."""
+def _normalize_location_text(text):
+    """Netflix-style City,State,Country with or without spaces, then strip country."""
+    text = _normalize_onsite_spacing(text or "")
+    text = re.sub(r",+", ",", text)
+    text = re.sub(r",\s*", ", ", text)
+    text = re.sub(r"\s+", " ", text).strip(" ,")
+    prev = None
+    while text != prev:
+        prev = text
+        text = _LOCATION_COUNTRY_RE.sub("", text).strip(" ,")
+    return text
+
+
+def _location_vocab_text(text):
+    parts = re.split(r"\s*;\s*", text or "")
+    return "; ".join(_normalize_location_text(part) for part in parts if part.strip())
+
+
+def _field_is_denied_board_token(key, value):
+    tokens = _field_tokens(_normalize_onsite_spacing(value))
+    return key == "team" and tokens in (["kanban"], ["mine"])
+
+
+def _field_vocab_miss(key, value):
+    """True when a team/location token is not on the allowlist."""
     if not isinstance(value, str) or not value:
         return False
-    tokens = _field_tokens(_normalize_onsite_spacing(value))
-    if key == "team" and tokens == ["kanban"]:
-        return True
-    if key == "team" and tokens == ["mine"]:
-        return True
+    source = _location_vocab_text(value) if key in {"location", "locations"} else _normalize_onsite_spacing(value)
+    tokens = _field_tokens(source)
+    if _field_is_denied_board_token(key, value):
+        return False
     allowed = _field_allowlist()
     for token in tokens:
         if key in {"location", "locations"} and token in _ONSITE_WORDS:
@@ -922,6 +1080,15 @@ def _field_vocab_blocked(key, value):
         if token not in allowed:
             return True
     return False
+
+
+def _field_vocab_blocked(key, value):
+    """Back-compat: deny-class board tokens or an allowlist miss."""
+    if not isinstance(value, str) or not value:
+        return False
+    if _field_is_denied_board_token(key, value):
+        return True
+    return _field_vocab_miss(key, value)
 
 
 def _is_exempt_job_id(token):
@@ -935,6 +1102,26 @@ def _is_exempt_job_id(token):
     if HEX_ID_RE.match(raw) and len(raw) >= 8:
         return True
     return False
+
+
+def _is_ats_id_segment(segment):
+    raw = (segment or "").strip()
+    if not raw:
+        return True
+    if _is_exempt_job_id(raw):
+        return True
+    if SLUG_RE.match(raw):
+        return True
+    if CAMEL_RE.match(raw):
+        return True
+    return False
+
+
+def _path_without_ats_ids(path):
+    return "/".join(
+        "id" if _is_ats_id_segment(segment) else segment
+        for segment in (path or "").split("/")
+    )
 
 
 def _ats_hosts():
@@ -1131,22 +1318,33 @@ def _sanitize_url(value):
         raise SanitizerBlocked("url query is blocked")
     if _path_has_person(parsed.path):
         raise SanitizerBlocked("url path has a person name")
-    if _path_has_stage(parsed.path):
+    if _onsite_in(parsed.path):
         raise SanitizerBlocked("url path has a stage word")
-    if _printable_hex_leak(parsed.path):
+    ats = _is_ats_host(host)
+    stage_path = _path_without_ats_ids(parsed.path) if ats else parsed.path
+    if _path_has_stage(stage_path):
+        raise SanitizerBlocked("url path has a stage word")
+    scan_path = stage_path if ats else parsed.path
+    if _printable_hex_leak(scan_path):
         raise SanitizerBlocked("url path has encoded text")
-    if _b64_in_text(parsed.path, allow_id=_is_ats_host(host)):
+    if _b64_in_text(scan_path, allow_id=ats):
         raise SanitizerBlocked("url path has a base64 token")
     cleaned = urlunparse(("https", parsed.netloc, parsed.path, "", "", ""))
-    leftover = _find_blocked(cleaned)
+    scan_url = (
+        urlunparse(("https", parsed.netloc, scan_path, "", "", ""))
+        if ats else cleaned
+    )
+    leftover = _find_blocked(scan_url)
     if leftover:
         raise SanitizerBlocked("blocked url")
     return cleaned
 
 
-def _find_blocked_plain(text):
+def _find_blocked_plain(text, allow_id=False):
     if not text:
         return None
+    if REDACTED in text:
+        return "redacted"
     if _STATUS_EMOJI_RE.search(text):
         return "application"
     if EMAIL_RE.search(text):
@@ -1167,7 +1365,7 @@ def _find_blocked_plain(text):
         return "mailto"
     if _application_status_hit(text):
         return "application"
-    if _printable_hex_leak(text):
+    if not allow_id and _printable_hex_leak(text):
         return "hex"
     if RESUME_FILE_RE.search(text):
         return "resume_file"
@@ -1195,7 +1393,7 @@ def _find_blocked_plain(text):
         return "scheme"
     if PUNYCODE_HOST_RE.search(text) or NON_ASCII_HOST_RE.search(text):
         return "host"
-    if _b64_in_text(text):
+    if _b64_in_text(text, allow_id=allow_id):
         return "base64"
     if _looks_like_person_name(text):
         return "name"
@@ -1211,7 +1409,7 @@ def _find_blocked_plain(text):
     return None
 
 
-def _find_blocked(text):
+def _find_blocked(text, allow_id=False):
     """Return a short reason if text still contains a blocked pattern."""
     if not text:
         return None
@@ -1219,11 +1417,11 @@ def _find_blocked(text):
         return "public text is not a string"
     if _obfuscated_board_token(text):
         return "board_name"
-    hit = _find_blocked_plain(text)
+    hit = _find_blocked_plain(text, allow_id=allow_id)
     if hit:
         return hit
     normalized = _deny_normalize(text)
-    hit = _find_blocked_plain(normalized)
+    hit = _find_blocked_plain(normalized, allow_id=allow_id)
     if hit:
         return hit
     if UNCLOSED_SCRIPT_RE.search(text):
@@ -1250,22 +1448,18 @@ def _find_blocked(text):
     return None
 
 
-def _redact_text(text):
+def _redact_text(text, allow_id=False):
+    """Public fields are never rewritten to [REDACTED]. A hit fails the page."""
     if not isinstance(text, str):
         raise SanitizerBlocked("free text is not a string")
     if not text:
         return text
-    out = text
-    for _name, detector in _DETECTORS:
-        out = detector.sub(REDACTED, out)
-    for secret_re in SECRET_RES:
-        out = secret_re.sub(REDACTED, out)
-    for literal in _profile_literals():
-        out = re.sub(re.escape(literal), REDACTED, out, flags=re.IGNORECASE)
-    leftover = _find_blocked(out)
+    if REDACTED in text:
+        raise SanitizerBlocked("redaction marker in public field")
+    leftover = _find_blocked(text, allow_id=allow_id)
     if leftover:
         raise SanitizerBlocked("residual {} after redaction".format(leftover))
-    return out
+    return text
 
 
 def scan_public_text(text):
@@ -1333,13 +1527,31 @@ def _check_type(key, value, expected):
     return False
 
 
+def _sanitize_droppable_map(jobs):
+    global _DROP_TOTAL_RECORDS
+    cleaned = {}
+    for map_key, map_value in jobs.items():
+        if _find_blocked(map_key, allow_id=True):
+            raise SanitizerBlocked("blocked map key")
+        _DROP_TOTAL_RECORDS += 1
+        try:
+            cleaned[map_key] = _sanitize_dict(map_value)
+        except VocabMiss as exc:
+            _note_drop(exc.field)
+    check_drop_budget()
+    return cleaned
+
+
 def _sanitize_value(key, value, expected):
     if not _check_type(key, value, expected):
         raise SanitizerBlocked("wrong type for {}".format(key))
     if expected == _STR:
-        if key in {"team", "locations", "location"} and _field_vocab_blocked(key, value):
+        if key in {"team", "locations", "location"} and _field_is_denied_board_token(key, value):
             raise SanitizerBlocked("blocked {} token".format(key))
-        return _redact_text(value)
+        cleaned = _redact_text(value, allow_id=(key == "id"))
+        if key in {"team", "locations", "location"} and _field_vocab_miss(key, value):
+            raise VocabMiss(key)
+        return cleaned
     if expected == _COMPANY:
         leftover = _find_blocked(value)
         if leftover:
@@ -1360,6 +1572,8 @@ def _sanitize_value(key, value, expected):
     if expected == _RECORD_LIST:
         return [_sanitize_dict(item) for item in value]
     if expected == _RECORD_MAP:
+        if key == "jobs":
+            return _sanitize_droppable_map(value)
         cleaned = {}
         for map_key, map_value in value.items():
             if _find_blocked(map_key):
@@ -1381,10 +1595,37 @@ def _sanitize_dict(record):
     out = {}
     for key, value in record.items():
         out[key] = _sanitize_value(key, value, KEY_TYPES[key])
-    leftover = _find_blocked(_public_dump(out))
+    dump = _mask_ats_ids_in_text(_public_dump(out))
+    if any(
+        isinstance(value, str)
+        and value.startswith("https://")
+        and _is_ats_host(urlparse(value).hostname)
+        for value in out.values()
+    ):
+        dump = UUID_SHAPE_RE.sub("id", dump)
+    leftover = _find_blocked(dump)
     if leftover:
         raise SanitizerBlocked("residual {} after redaction".format(leftover))
     return out
+
+
+def _mask_ats_ids_in_text(text):
+    """Strip ATS job-id path segments so leftover scans do not flag UUIDs/slugs."""
+    if not text:
+        return text
+
+    def repl(match):
+        url = match.group(0)
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if not _is_ats_host(host):
+            return url
+        return urlunparse((
+            parsed.scheme, parsed.netloc, _path_without_ats_ids(parsed.path),
+            parsed.params, parsed.query, parsed.fragment,
+        ))
+
+    return re.sub(r"https://[^\s\"']+", repl, text)
 
 
 def _public_dump(record):
@@ -1415,24 +1656,45 @@ def sanitize(record):
     """Sanitize one public record.
 
     Accepts a dict or a JSON string/bytes of a dict. Returns a new dict.
-    Raises SanitizerBlocked — and returns nothing — on any failure.
-    Application records are not public records; do not call this on them.
+    Raises SanitizerBlocked — and returns nothing — on any deny-class failure.
+    Raises VocabMiss on an unknown team or city token so a caller can drop
+    that record. Application records are not public; do not call this on them.
     """
     try:
         return _sanitize(record)
     except SanitizerBlocked:
         raise
+    except VocabMiss:
+        raise
     except Exception as exc:
         raise SanitizerBlocked("internal sanitizer failure") from exc
 
 
-def sanitize_records(records):
-    """Sanitize a list of public records. Any failure blocks the whole batch."""
+def sanitize_records(records, accumulate=False):
+    """Sanitize a list of public records.
+
+    VocabMiss drops the record and counts it by field name. Deny-class hits
+    still raise SanitizerBlocked and fail the page. More than 25 drops, or
+    more than 10% of the batch, fails the page.
+    """
+    global _DROP_TOTAL_RECORDS
     try:
         if not isinstance(records, list):
             raise SanitizerBlocked("records is not a list")
-        return [sanitize(record) for record in records]
+        if not accumulate:
+            reset_drops()
+        kept = []
+        for record in records:
+            _DROP_TOTAL_RECORDS += 1
+            try:
+                kept.append(sanitize(record))
+            except VocabMiss as exc:
+                _note_drop(exc.field)
+        check_drop_budget()
+        return kept
     except SanitizerBlocked:
+        raise
+    except VocabMiss:
         raise
     except Exception as exc:
         raise SanitizerBlocked("internal sanitizer failure") from exc

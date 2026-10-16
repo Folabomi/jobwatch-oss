@@ -23,7 +23,15 @@ STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jobwatch_
 ORGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "organizations.json")
 HIDDEN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dismissed.json")
 
-from sanitizer import SanitizerBlocked, sanitize, sanitize_records, scan_public_text  # noqa: E402
+from sanitizer import (  # noqa: E402
+    SanitizerBlocked,
+    format_drop_counts,
+    last_drop_counts,
+    reset_drops,
+    sanitize,
+    sanitize_records,
+    scan_public_text,
+)
 from taxonomy import (  # noqa: E402 - constants live in one place now
     ARCH_LABELS,
     COMPETENCIES,
@@ -880,10 +888,14 @@ def render(state, slug, orgs_data=(), dismissed=()):
     # closed and stall the board. Only the public projection is sanitized.
     # sanitize raises SanitizerBlocked and returns nothing if a record is
     # unsafe; this function then writes no files.
+    reset_drops()
     state = sanitize(state)
     dismissed = sanitize({"dismissed": list(dismissed)})["dismissed"]
     rows = build_rows(state)
-    orgs = sanitize_records(build_orgs(list(orgs_data), rows, state.get("boards") or {}))
+    orgs = sanitize_records(
+        build_orgs(list(orgs_data), rows, state.get("boards") or {}),
+        accumulate=True,
+    )
     skills_svg, skills_n = skills_chart(rows)
     boards = state.get("boards") or {}
     ok = [b for b in boards.values() if b.get("status") == "ok"]
@@ -1312,6 +1324,9 @@ def main():
                 dismissed = sanitize(handle.read()).get("dismissed", [])
 
         html, js = render(state, args.slug, orgs_data, dismissed)
+        counts = last_drop_counts()
+        if counts:
+            print(format_drop_counts(counts), file=sys.stderr)
     except SanitizerBlocked as exc:
         # Fail closed: do not write HTML or JS, even leftovers from an older run.
         print("sanitizer blocked public page: {}".format(exc), file=sys.stderr)
