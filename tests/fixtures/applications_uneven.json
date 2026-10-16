@@ -1,0 +1,111 @@
+{
+  "updated": "2026-10-16",
+  "note": "PII-free synthetic. Mirrors the uneven hand-edited applications.json shape: extra dated keys, mixed statuses, and the internal interview_style enum. Not public output.",
+  "applications": [
+    {
+      "company": "Acme Cloud",
+      "title": "DDoS Mitigation Engineer",
+      "status": "applied",
+      "applied": "2026-03-01",
+      "source": "greenhouse",
+      "url": "https://example.com/jobs/100",
+      "variant": "edge",
+      "verdict": "in_play",
+      "interview_style": "ai_allowed_or_takehome",
+      "2026-03-04": "recruiter pinged",
+      "warm_path": false,
+      "match": 1
+    },
+    {
+      "company": "Northwind Systems",
+      "title": "Edge Security Engineer",
+      "status": "submitted",
+      "note": "Verify the portal accepted the packet.",
+      "interview_style": "design_scenario_ir_heavy",
+      "last_contact": null
+    },
+    {
+      "company": "Globex Networks",
+      "title": "Detection and Response Engineer",
+      "status": "screen_done_awaiting",
+      "interview_style": "live_no_ai_coding",
+      "source": "ashby"
+    },
+    {
+      "company": "Initech",
+      "title": "Threat Hunting Engineer",
+      "status": "confirmed",
+      "interview_style": "unknown"
+    },
+    {
+      "company": "Umbrella Media",
+      "title": "Role not identified",
+      "status": "unconfirmed",
+      "match": null
+    },
+    {
+      "company": "Hooli",
+      "title": "Traffic Integrity Engineer",
+      "status": "not_submitted"
+    },
+    {
+      "company": "Pied Piper",
+      "title": "Compression Security Engineer",
+      "status": "pending",
+      "interview_style": "unknown"
+    },
+    {
+      "company": "Soylent",
+      "title": "Anti-Abuse Engineer",
+      "status": "parked_mulling",
+      "2026-02-11": "mulling the loop"
+    },
+    {
+      "company": "Stark Industries",
+      "title": "Network Security Engineer",
+      "status": "warm_resume_sent",
+      "warm_path": true
+    },
+    {
+      "company": "Wayne Enterprises",
+      "title": "Detection Engineer",
+      "status": "watch"
+    },
+    {
+      "company": "Oscorp",
+      "title": "SIRT Engineer",
+      "status": "rejected"
+    },
+    {
+      "company": "Massive Dynamic",
+      "title": "Perimeter Engineer",
+      "status": "closed"
+    },
+    {
+      "company": "Cyberdyne",
+      "title": "Botnet Researcher",
+      "status": "closed_candidate_declined"
+    },
+    {
+      "company": "Aperture",
+      "title": "WAF Engineer",
+      "status": "closed_duplicate_180d"
+    },
+    {
+      "company": "Tyrell",
+      "title": "Incident Response Engineer",
+      "status": "closed_fola_not_fit"
+    },
+    {
+      "company": "Wonka",
+      "title": "Abuse Analyst",
+      "status": "superseded_by_staff"
+    },
+    {
+      "company": "Monsters Inc",
+      "title": "SIRT Analyst",
+      "status": "accepted",
+      "interview_style": "ai_allowed_or_takehome"
+    }
+  ]
+}

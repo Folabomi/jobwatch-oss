@@ -11,3 +11,6 @@ jobwatch_agent.log
 .slug
 dismissed.json
 organizations.json
+applicant_profile.json
+.publish_hold
+tests/fixtures/live_postings.pending.json

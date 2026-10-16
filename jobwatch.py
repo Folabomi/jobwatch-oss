@@ -12,9 +12,23 @@ import os
 import re
 import sys
 import time
+import unicodedata
 from datetime import datetime, timezone
 
 import requests
+
+from sanitizer import (
+    SanitizerBlocked,
+    VocabMiss,
+    check_drop_budget,
+    count_record,
+    format_drop_counts,
+    last_drop_counts,
+    record_vocab_drop,
+    reset_drops,
+    sanitize,
+    scan_public_text,
+)
 
 # --------------------------------------------------------------------------
 # Filters. Tune these two lists; everything else keys off them.
@@ -511,22 +525,50 @@ def save_state(previous, matches, ok_slugs, stats=None):
 # --------------------------------------------------------------------------
 
 
+def _public_matches(matches):
+    """Sanitize each match. Vocab misses drop; deny-class hits fail the report."""
+    kept = {}
+    for key, match in matches.items():
+        count_record()
+        try:
+            kept[key] = sanitize(match)
+        except VocabMiss as exc:
+            record_vocab_drop(exc.field)
+    check_drop_budget()
+    return kept
+
+
+def _one_line(value):
+    """Report fields are single-line. Controls and line separators become spaces."""
+    text = "" if value is None else str(value)
+    return "".join(
+        " " if unicodedata.category(ch) in {"Cc", "Zl", "Zp"} else ch
+        for ch in text
+    )
+
+
 def render_job(match):
     flag = "  [SDE SIGNAL]" if "sde-signal" in match.get("flags", []) else ""
+    terms = ", ".join(_one_line(term) for term in match.get("terms", [])) or "n/a"
     return "\n".join(
         [
-            "- {} | {}{}".format(match["company"], match["title"], flag),
-            "  {}".format(match.get("location") or "location not stated"),
-            "  {}".format(match["url"]),
-            "  id {} | matched {}".format(match["id"], ", ".join(match.get("terms", [])) or "n/a"),
+            "- {} | {}{}".format(
+                _one_line(match["company"]), _one_line(match["title"]), flag,
+            ),
+            "  {}".format(_one_line(match.get("location") or "location not stated")),
+            "  {}".format(_one_line(match["url"])),
+            "  id {} | matched {}".format(_one_line(match["id"]), terms),
         ]
     )
 
 
 def render_report(matches, previous, ok_slugs, failures, diff_mode, first_run):
+    reset_drops()
+    matches = _public_matches(matches)
+
     lines = []
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    lines.append("# jobwatch {}".format(now))
+    lines.append("# jobwatch {}".format(_one_line(now)))
     lines.append("")
 
     opened = []
@@ -534,11 +576,12 @@ def render_report(matches, previous, ok_slugs, failures, diff_mode, first_run):
     if diff_mode:
         old_jobs = previous.get("jobs", {})
         opened = [m for key, m in sorted(matches.items()) if key not in old_jobs]
-        closed = [
-            v
-            for key, v in sorted(old_jobs.items())
+        closed_raw = {
+            key: v
+            for key, v in old_jobs.items()
             if key not in matches and v.get("board") in ok_slugs
-        ]
+        }
+        closed = list(_public_matches(closed_raw).values())
         if first_run:
             lines.append("First run. No previous state, so everything below is reported as new.")
             lines.append("")
@@ -557,13 +600,71 @@ def render_report(matches, previous, ok_slugs, failures, diff_mode, first_run):
     lines.append("")
     lines.append("## Boards")
     lines.append("")
-    lines.append("Polled cleanly: {}".format(", ".join(ok_slugs) or "none"))
+    lines.append("Polled cleanly: {}".format(
+        ", ".join(_one_line(slug) for slug in ok_slugs) or "none"
+    ))
     for slug, reason in failures:
-        lines.append("FAILED {}: {}".format(slug, reason))
+        lines.append("FAILED {}: {}".format(_one_line(slug), _one_line(reason)))
     lines.append("")
-    lines.append("SUMMARY new={} closed={} live={} boards_ok={} boards_failed={}".format(
-        len(opened), len(closed), len(matches), len(ok_slugs), len(failures)))
-    return "\n".join(lines)
+    counts = last_drop_counts()
+    dropped = sum(counts.values())
+    fields = format_drop_counts(counts)
+    lines.append(_one_line(fields))
+    lines.append("")
+    lines.append(
+        "SUMMARY new={} closed={} live={} boards_ok={} boards_failed={} drops={} {}".format(
+            len(opened), len(closed), len(matches), len(ok_slugs), len(failures),
+            dropped, _one_line(fields),
+        )
+    )
+    report = "\n".join(lines)
+    scan_public_text(report)
+    return report
+
+
+def record_public_postings(boards=None, dest=None):
+    """Run poll() and write public posting fields to a review file.
+
+    Never overwrites the committed live fixture or the team/city vocab.
+    Team tokens are not derived from titles.
+    """
+    import sanitizer as _san
+    boards = boards or BOARDS
+    committed = {
+        os.path.abspath(_san.LIVE_POSTINGS_PATH),
+        os.path.abspath(_san.LIVE_VOCAB_PATH),
+    }
+    dest = dest or _san.LIVE_PENDING_PATH
+    if os.path.abspath(dest) in committed:
+        dest = _san.LIVE_PENDING_PATH
+    matches, ok_slugs, failures, stats = poll(boards)
+    postings = []
+    for key, match in sorted(matches.items()):
+        url = match.get("url") or ""
+        if not url.lower().startswith("https://"):
+            continue
+        postings.append({
+            "id": match["id"],
+            "board": match["board"],
+            "company": match["company"],
+            "title": match["title"],
+            "location": match["location"],
+            "url": url,
+        })
+    payload = {
+        "polled": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "source": "jobwatch.poll public fields only; no applications, JD text, or PII",
+        "boards_ok": list(ok_slugs),
+        "boards_failed": [{"slug": s, "reason": r} for s, r in failures],
+        "stats": stats,
+        "match_count": len(matches),
+        "postings": postings,
+    }
+    os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+    with open(dest, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    return payload
 
 
 def run_probe(boards):
@@ -586,6 +687,9 @@ def main():
     parser.add_argument("--board", help="poll a single board by slug")
     parser.add_argument("--probe", action="store_true", help="print raw shapes, do not touch state")
     parser.add_argument("--list-boards", action="store_true", help="list board slugs and exit")
+    parser.add_argument("--record-live", action="store_true",
+                        help="run poll() and write public postings to "
+                             "tests/fixtures/live_postings.pending.json for review")
     args = parser.parse_args()
 
     if args.list_boards:
@@ -604,6 +708,12 @@ def main():
         run_probe(boards)
         return 0
 
+    if args.record_live:
+        payload = record_public_postings(boards)
+        print("wrote {} postings (matches={})".format(
+            len(payload["postings"]), payload["match_count"]))
+        return 0 if payload["boards_ok"] else 1
+
     print("polling {} board(s)...".format(len(boards)), file=sys.stderr)
     matches, ok_slugs, failures, stats = poll(boards)
 
@@ -615,7 +725,13 @@ def main():
 
     previous = load_state()
     first_run = not previous.get("jobs")
-    report = render_report(matches, previous, ok_slugs, failures, args.diff, first_run)
+    try:
+        report = render_report(matches, previous, ok_slugs, failures, args.diff, first_run)
+    except SanitizerBlocked as exc:
+        # Local state is not a public target. Keep the poll; refuse the report.
+        print("sanitizer blocked public report: {}".format(exc), file=sys.stderr)
+        save_state(previous, matches, ok_slugs, stats)
+        return 1
     print(report)
     save_state(previous, matches, ok_slugs, stats)
     return 0

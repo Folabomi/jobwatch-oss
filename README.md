@@ -191,6 +191,11 @@ Runs locally on a LaunchAgent rather than a hosted runner, so there are no crede
 except the AWS profile already on the machine. `run_local.sh` polls, publishes, and fires a
 notification only when something new opened.
 
+To keep polling and scoring while holding the public page, create a `.publish_hold` file in
+the repo root. While that file exists, `run_local.sh` and `deploy_site.sh` both skip the
+upload. Remove the file to resume publishing. The file is gitignored. There is no MonoClaw
+call in this repo.
+
 ## Three things to check first when it goes quiet
 
 1. **The scheduler is not loaded.** `launchctl list | grep jobwatch`.

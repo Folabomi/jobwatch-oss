@@ -263,14 +263,52 @@ TIER_META = {   'direct': {'bar': '██████░░', 'label': 'Traffic 
     'rare': {'bar': '████████', 'label': 'Names the discipline', 'rank': 3},
     'wide': {'bar': '████░░░░', 'label': 'Wide term', 'rank': 1}}
 
-STATUS_META = {   'accepted': {'cls': 'st-good', 'label': 'Accepted'},
-    'confirmed': {'cls': 'st-ok', 'label': 'Applied'},
-    'not_submitted': {'cls': 'st-no', 'label': 'Not submitted'},
-    'pending': {'cls': 'st-warn', 'label': 'Needs confirming'},
-    'rejected': {'cls': 'st-no', 'label': 'Rejected'},
-    'unconfirmed': {'cls': 'st-warn', 'label': 'Verify it sent'}}
+# Application statuses. Local tracker only — never published.
+# stage=verify is the "did it land?" bucket. submitted lives there.
+# ACTION_STATUSES is the "needs a look" alert list; submitted is not on it.
+STATUS_META = {
+    "accepted": {"cls": "st-good", "label": "Accepted", "stage": "offer"},
+    "applied": {"cls": "st-ok", "label": "Applied", "stage": "in_play"},
+    "closed": {"cls": "st-no", "label": "Closed", "stage": "closed"},
+    "closed_candidate_declined": {"cls": "st-no", "label": "Closed, declined", "stage": "closed"},
+    "closed_duplicate_180d": {"cls": "st-no", "label": "Closed, 180-day duplicate", "stage": "closed"},
+    "closed_fola_not_fit": {"cls": "st-no", "label": "Closed, not a fit", "stage": "closed"},
+    "confirmed": {"cls": "st-ok", "label": "Applied", "stage": "in_play"},
+    "not_submitted": {"cls": "st-no", "label": "Not submitted", "stage": "verify"},
+    "parked_mulling": {"cls": "st-no", "label": "Parked", "stage": "parked"},
+    "pending": {"cls": "st-warn", "label": "Needs confirming", "stage": "verify"},
+    "rejected": {"cls": "st-no", "label": "Rejected", "stage": "closed"},
+    "screen_done_awaiting": {"cls": "st-warn", "label": "Screen done, awaiting", "stage": "in_play"},
+    "submitted": {"cls": "st-warn", "label": "Submitted, verify it sent", "stage": "verify"},
+    "superseded_by_staff": {"cls": "st-no", "label": "Superseded", "stage": "closed"},
+    "unconfirmed": {"cls": "st-warn", "label": "Verify it sent", "stage": "verify"},
+    "warm_resume_sent": {"cls": "st-ok", "label": "Warm resume sent", "stage": "in_play"},
+    "watch": {"cls": "st-no", "label": "Watching", "stage": "watch"},
+}
 
-ACTION_STATUSES = ('pending', 'unconfirmed', 'not_submitted')
+ACTION_STATUSES = ("pending", "unconfirmed", "not_submitted")
+
+# Safe bucket for a status the local tracker has not named yet.
+UNKNOWN_STATUS = {"cls": "st-no", "label": "Unknown", "stage": "unknown"}
+
+
+def status_meta(status):
+    """Look up an application status. Unknown values map to a safe bucket.
+
+    Local tracker only. The public page must not call this: application
+    records are not public output.
+    """
+    return STATUS_META.get(status, UNKNOWN_STATUS)
+
+
+# Internal only. Never published. Extra keys on an application must not
+# fail a public render, because application records are not public output.
+INTERVIEW_STYLES = (
+    "ai_allowed_or_takehome",
+    "design_scenario_ir_heavy",
+    "live_no_ai_coding",
+    "unknown",
+)
 
 INTL = (   'united kingdom',
     'london',
@@ -417,7 +455,7 @@ AMAZON_LEVEL_RE = re.compile(r"^L(\d{1,2})$", re.IGNORECASE)
 
 
 def level_move(amazon_equiv):
-    """Return 'lateral', 'up', 'down' or 'unknown' for an Amazon-form level.
+    r"""Return 'lateral', 'up', 'down' or 'unknown' for an Amazon-form level.
 
     Deliberately strict. It takes an Amazon level such as "L6", never a target's
     own ladder name, because those are not comparable: Meta E5, Roblox IC4 and
@@ -439,6 +477,55 @@ LEVEL_MOVE_LABELS = {
     "up": "Up-level", "lateral": "Lateral", "down": "Down-level",
     "unknown": "Level unresolved",
 }
+
+# Sample corpus names the public page may emit. Live board companies are
+# derived from jobwatch.BOARDS at sanitize time so adding Stripe (etc.)
+# publishes without a second hardcoded list.
+SAMPLE_COMPANIES = (
+    "Acme Cloud", "Northwind Systems", "Globex Networks", "Initech",
+    "Umbrella Media", "Hooli", "Vandelay Industries", "Stark Research",
+)
+
+
+def board_companies():
+    """Company names from jobwatch.BOARDS. Lazy to avoid an import cycle."""
+    import jobwatch
+    return frozenset(row["company"] for row in jobwatch.BOARDS)
+
+
+def known_companies():
+    """Hardcoded samples plus every live board company."""
+    return board_companies() | frozenset(SAMPLE_COMPANIES)
+
+RELATIONSHIP_ENUM = frozenset({
+    "competitor", "customer", "both", "neither", "unknown",
+})
+MOVE_ENUM = frozenset(LEVEL_MOVE_LABELS)
+
+PAY_NOTE_ENUM = frozenset({
+    "",
+    "Band posted per req",
+    "Reported median",
+    "Estimated median",
+    "Estimated band",
+    "Nonprofit band",
+})
+
+
+def classify_pay_note(note):
+    """Map a local compensation note to a public pay_note enum value."""
+    text = (note or "").strip().lower()
+    if not text:
+        return ""
+    if "nonprofit" in text:
+        return "Nonprofit band"
+    if "band posted" in text:
+        return "Band posted per req"
+    if "estimate" in text or text.startswith("est"):
+        return "Estimated median" if "median" in text else "Estimated band"
+    if "median" in text:
+        return "Reported median"
+    return "Estimated band"
 
 # Down-level is gated: excluded from the default view, reachable only on request.
 GATED_LEVEL_MOVES = ("down",)

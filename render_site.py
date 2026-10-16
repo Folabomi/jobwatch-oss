@@ -11,6 +11,7 @@ import html
 import json
 import os
 import re
+import sys
 from datetime import datetime
 
 SITE_CITY = "your city"
@@ -19,12 +20,22 @@ SITE_RUN_TIME = "06:20"
 SLUG_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jobwatch_state.json")
-APPS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "applications.json")
 ORGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "organizations.json")
 HIDDEN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dismissed.json")
 
+from sanitizer import (  # noqa: E402
+    SanitizerBlocked,
+    VocabMiss,
+    check_drop_budget,
+    format_drop_counts,
+    last_drop_counts,
+    record_vocab_drop,
+    reset_drops,
+    sanitize,
+    sanitize_records,
+    scan_public_text,
+)
 from taxonomy import (  # noqa: E402 - constants live in one place now
-    ACTION_STATUSES,
     ARCH_LABELS,
     COMPETENCIES,
     FALLBACK_COMPETENCY,
@@ -35,11 +46,11 @@ from taxonomy import (  # noqa: E402 - constants live in one place now
     SECTOR_LABELS,
     LEVEL_MOVE_LABELS,
     FIT_GAUGE,
+    classify_pay_note,
     SKILLS,
     geo_note,
     SKILL_BANDS,
     SECTOR_OF_INDUSTRY,
-    STATUS_META,
     TIER_DIRECT,
     TIER_META,
     TIER_RARE,
@@ -91,8 +102,7 @@ US = (
 
 
 def esc_html(value):
-    """Everything interpolated into the HTML goes through this. applications.json
-    is hand-pasted from recruiter mail, so it is untrusted for markup purposes."""
+    """Everything interpolated into the HTML goes through this."""
     return html.escape("" if value is None else str(value), quote=True)
 
 
@@ -130,11 +140,8 @@ def place_for(location):
     return "unclear"
 
 
-def build_rows(state, apps=()):
-    by_key = {}
-    for app in apps:
-        if app.get("match"):
-            by_key[(app["company"], app["match"])] = app
+def build_rows(state):
+    """Project jobs for the public page. No application fields."""
     rows = []
     for job in state.get("jobs", {}).values():
         terms = sorted({normalize_term(t) for t in job.get("terms", [])})
@@ -152,9 +159,7 @@ def build_rows(state, apps=()):
                 "sde": bool(job.get("flags")),
                 "place": place_for(job.get("location")),
                 "since": (job.get("first_seen") or "")[:10],
-                "status": (by_key.get((job["company"], job["title"])) or {}).get("status"),
                 "competency": competency_for(job["title"])["key"],
-                "resume": competency_for(job["title"])["cv"],
                 "pay": ([job.get("pay_low"), job.get("pay_high")]
                         if job.get("pay_low") else None),
                 "skills": job.get("skills") or [],
@@ -363,11 +368,9 @@ table.apps td.note{font-family:'IBM Plex Sans',sans-serif;font-size:13px;color:v
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 """
 
-JS = """
+JS = r"""
 var TIER = %(tier)s;
 var ORGS = %(orgs)s;
-var STATUS = %(status)s;
-var RESUMES = %(resumes)s;
 var COMPS = %(comps)s;
 var MOVES = %(moves)s;
 var FITG = %(fitgauge)s;
@@ -376,7 +379,7 @@ var DISMISSED = %(dismissed)s;
 // Level is gated, not scored: "inscope" is the default and excludes down-levels.
 // Facets OR within a row and AND across rows. An empty array means no filter on
 // that facet, which is what the "All" chip restores.
-var multi = {sector:[], fit:[], arch:[], move:[], place:[], app:[], tier:[], rel:[]};
+var multi = {sector:[], fit:[], arch:[], move:[], place:[], tier:[], rel:[]};
 // Thresholds are nested ranges, so multi-select would be meaningless. Single only.
 var state = {paytier:'all', ind:'all', comp:'all', co:'all'};
 var toggles = {traffic:false, customer:false, open:false, banded:false, sde:false};
@@ -420,7 +423,7 @@ function facetOk(name, value){
 
 function safeUrl(u){
   u = String(u || '');
-  return /^https?:\/\//i.test(u) ? u : '#';
+  return /^https:\/\//i.test(u) ? u : '#';
 }
 
 function esc(s){
@@ -468,14 +471,6 @@ function reqOk(r){
   if(showHidden && !hidden[r.id]) return false;
   if(!facetOk('tier', r.tier)) return false;
   if(!facetOk('place', r.place)) return false;
-  if(multi.app.length){
-    var appOk = multi.app.some(function(v){
-      if(v === 'applied') return !!r.status;
-      if(v === 'open') return !r.status;
-      return r.status === v;
-    });
-    if(!appOk) return false;
-  }
   if(toggles.sde && !r.sde) return false;
   if(toggles.banded && !r.pay) return false;
   if(state.comp !== 'all' && r.competency !== state.comp) return false;
@@ -485,7 +480,7 @@ function reqOk(r){
 // When a req-level filter is on, an org with no board cannot satisfy it, so it
 // is hidden rather than shown as a false match.
 function reqFilterOn(){
-  return showHidden || multi.tier.length > 0 || multi.place.length > 0 || multi.app.length > 0 ||
+  return showHidden || multi.tier.length > 0 || multi.place.length > 0 ||
          state.comp !== 'all' || toggles.sde || toggles.banded;
 }
 
@@ -494,8 +489,7 @@ function reqHtml(r){
   return '<div class="req">' +
     '<div>' +
       '<p class="title">' + esc(r.title) +
-        (r.sde ? '<span class="sde">SDE signal</span>' : '') +
-        (r.status ? '<span class="stat-badge ' + STATUS[r.status].cls + '">' + esc(STATUS[r.status].label) + '</span>' : '') + '</p>' +
+        (r.sde ? '<span class="sde">SDE signal</span>' : '') + '</p>' +
       '<p class="terms"><span class="comp">' + esc(COMPS[r.competency]) + '</span>' +
         ' &middot; matched ' + esc(r.terms.join(', ')) + '</p>' +
     '</div>' +
@@ -505,17 +499,15 @@ function reqHtml(r){
     '</div>' +
     '<div>' +
       '<p class="loc" title="' + esc(r.location) + '">' + esc(shortLoc(r.location) || 'not stated') + '</p>' +
-      (r.pay ? '<p class="pay"><b>' + money(r.pay[0]) + ' \u2013 ' + money(r.pay[1]) + '</b>' +
+      (r.pay ? '<p class="pay"><b>' + money(r.pay[0]) + ' – ' + money(r.pay[1]) + '</b>' +
                '<span class="paynote">base only</span></p>' : '') +
       '<div class="acts">' +
         '<a class="act" href="' + esc(safeUrl(r.url)) + '" target="_blank" rel="noopener">Open req</a>' +
-        '<a class="act alt" href="https://drive.google.com/file/d/' + RESUMES[r.resume].id +
-          '/view" target="_blank" rel="noopener">' + esc(RESUMES[r.resume].label) + ' CV</a>' +
         (hidden[r.id]
           ? (hidden[r.id] === 'file'
               ? '<span class="act muted" title="Hidden in dismissed.json. Remove it there to restore.">Hidden in file</span>'
-              : '<button class="act muted" data-restore="' + esc(r.id) + '">Restore</button>')
-          : '<button class="act muted" data-hide="' + esc(r.id) + '" title="Hide this req. Stored in this browser.">Not for me</button>') +
+              : '<button class="act muted" restoreid="' + esc(r.id) + '">Restore</button>')
+          : '<button class="act muted" hideid="' + esc(r.id) + '" title="Hide this req. Stored in this browser.">Not for me</button>') +
       '</div>' +
       '<p class="since">tracked since ' + esc(r.since) + '</p>' +
     '</div>' +
@@ -553,9 +545,9 @@ function orgHtml(o, reqs){
   if(o.arch_label) tags += '<span class="tag">' + esc(o.arch_label) + '</span>';
   tags += '<span class="tag">' + esc(o.industry_label) + '</span>';
   if(o.warm) tags += '<span class="tag t-cust">Warm channel</span>';
-  if(o.relationship === 'customer') tags += '<span class="tag t-aws" title="' + esc(o.rel_note) + '">AWS customer</span>';
-  else if(o.relationship === 'competitor') tags += '<span class="tag t-rival" title="' + esc(o.rel_note) + '">Shield competitor</span>';
-  else if(o.relationship === 'both') tags += '<span class="tag t-rival" title="' + esc(o.rel_note) + '">Competitor, on AWS</span>';
+  if(o.relationship === 'customer') tags += '<span class="tag t-aws">AWS customer</span>';
+  else if(o.relationship === 'competitor') tags += '<span class="tag t-rival">Shield competitor</span>';
+  else if(o.relationship === 'both') tags += '<span class="tag t-rival">Competitor, on AWS</span>';
   if(!o.traffic) tags += '<span class="tag t-pivot">Pivot</span>';
   if(o.move === 'down') tags += '<span class="tag t-gate">Down-level</span>';
   if(o.move === 'up') tags += '<span class="tag t-up">Up-level</span>';
@@ -579,7 +571,7 @@ function orgHtml(o, reqs){
     comp += '<p class="paynote2">L6 maps to ' + esc(o.target_level) +
             (o.level_conf === 'reported' ? '' : ' (estimate)') + '</p>';
   }
-  var geo = (o.geo && o.geo.length) ? '<p class="tax">' + esc(o.geo.join(' \u00b7 ')) + '</p>' : '';
+  var geo = (o.geo && o.geo.length) ? '<p class="tax">' + esc(o.geo.join(' · ')) + '</p>' : '';
 
   var acts = '';
   if(o.careers) acts += '<a class="act" href="' + esc(safeUrl(o.careers)) + '" target="_blank" rel="noopener">Careers</a>';
@@ -598,7 +590,6 @@ function orgHtml(o, reqs){
       '</div>' +
       (o.team ? '<p class="team">' + esc(o.team) + ' <span class="tags">' + tags + '</span></p>'
               : '<p class="team"><span class="tags">' + tags + '</span></p>') +
-      (o.why ? '<p class="why">' + esc(o.why) + '</p>' : '') +
       '<p class="seen">' + emptyNote(o, reqs) + '</p>' +
     '</div>' +
     gauge +
@@ -624,14 +615,13 @@ function render(){
   });
   var nHidden = Object.keys(hidden).length;
   document.getElementById('count').textContent =
-    shown.length + ' of ' + ORGS.length + ' orgs \u00b7 ' + reqCount + ' reqs' +
-    (nHidden ? ' \u00b7 ' + nHidden + ' hidden' : '');
+    shown.length + ' of ' + ORGS.length + ' orgs · ' + reqCount + ' reqs' +
+    (nHidden ? ' · ' + nHidden + ' hidden' : '');
   hideChip.textContent = nHidden ? 'Hidden (' + nHidden + ')' : 'Hidden';
   var list = document.getElementById('list');
   if(!shown.length){
     var why = 'Nothing matches every filter. Widen one of them.';
     if(state.move === 'down') why = 'No organisation on the list would down-level you.';
-    if(state.app === 'accepted') why = 'No application has been accepted yet. This fills in as replies land.';
     list.innerHTML = '<div class="empty">' + why + '</div>';
     return;
   }
@@ -640,15 +630,15 @@ function render(){
 
 function syncRow(f){
   var sel = multi[f];
-  document.querySelectorAll('button.chip[data-f="' + f + '"]').forEach(function(x){
-    var v = x.dataset.v;
+  document.querySelectorAll('button.chip[facet="' + f + '"]').forEach(function(x){
+    var v = x.getAttribute('val');
     x.setAttribute('aria-pressed', String(v === 'all' ? sel.length === 0 : sel.indexOf(v) >= 0));
   });
 }
 
-document.querySelectorAll('button.chip[data-f]').forEach(function(b){
+document.querySelectorAll('button.chip[facet]').forEach(function(b){
   b.addEventListener('click', function(){
-    var f = b.dataset.f, v = b.dataset.v;
+    var f = b.getAttribute('facet'), v = b.getAttribute('val');
     if(multi[f]){
       if(v === 'all'){ multi[f] = []; }
       else {
@@ -658,7 +648,7 @@ document.querySelectorAll('button.chip[data-f]').forEach(function(b){
       syncRow(f);
     } else {
       state[f] = v;
-      document.querySelectorAll('button.chip[data-f="' + f + '"]').forEach(function(x){
+      document.querySelectorAll('button.chip[facet="' + f + '"]').forEach(function(x){
         x.setAttribute('aria-pressed', String(x === b));
       });
     }
@@ -666,9 +656,9 @@ document.querySelectorAll('button.chip[data-f]').forEach(function(b){
   });
 });
 
-document.querySelectorAll('button.chip[data-t]').forEach(function(b){
+document.querySelectorAll('button.chip[tog]').forEach(function(b){
   b.addEventListener('click', function(){
-    var t = b.dataset.t;
+    var t = b.getAttribute('tog');
     toggles[t] = !toggles[t];
     b.setAttribute('aria-pressed', String(toggles[t]));
     render();
@@ -676,10 +666,10 @@ document.querySelectorAll('button.chip[data-t]').forEach(function(b){
 });
 
 document.getElementById('list').addEventListener('click', function(ev){
-  var h = ev.target.closest('[data-hide]');
-  if(h){ hideReq(h.dataset.hide); return; }
-  var r = ev.target.closest('[data-restore]');
-  if(r){ restoreReq(r.dataset.restore); }
+  var h = ev.target.closest('[hideid]');
+  if(h){ hideReq(h.getAttribute('hideid')); return; }
+  var r = ev.target.closest('[restoreid]');
+  if(r){ restoreReq(r.getAttribute('restoreid')); }
 });
 
 var hideChip = document.getElementById('hidechip');
@@ -833,19 +823,17 @@ def build_orgs(orgs_data, rows, board_stats=None):
         out.append({
             "name": org["name"],
             "industry": industry,
-            "industry_label": INDUSTRY_LABELS.get(industry, industry or "unclassified"),
+            "industry_label": INDUSTRY_LABELS.get(industry) or "unclassified",
             "sector": org.get("sector") or SECTOR_OF_INDUSTRY.get(industry),
             "arch": org.get("arch"),
-            "arch_label": ARCH_LABELS.get(org.get("arch"), org.get("arch") or ""),
+            "arch_label": ARCH_LABELS.get(org.get("arch")) or "unclassified",
             "fit": org.get("fit"),
-            "fit_label": FIT_LABELS.get(org.get("fit"), org.get("fit") or ""),
+            "fit_label": FIT_LABELS.get(org.get("fit")) or "unclassified",
             "traffic": bool(org.get("traffic")),
             "warm": bool(org.get("warm_channel")),
             "relationship": org.get("relationship") or "unknown",
-            "rel_note": org.get("relationship_note") or "",
             "rel_url": org.get("relationship_url") or "",
             "team": org.get("team") or "",
-            "why": org.get("why") or "",
             "locations": org.get("locations") or "",
             "careers": org.get("careers") or "",
             "polled": bool(board),
@@ -855,7 +843,7 @@ def build_orgs(orgs_data, rows, board_stats=None):
             "board_status": (board_stats.get(board) or {}).get("status") if board else None,
             "median": comp.get("median_total"),
             "median_conf": comp.get("confidence") or "unknown",
-            "pay_note": comp.get("note") or "",
+            "pay_note": classify_pay_note(comp.get("note")),
             "pay_tier": comp.get("tier") or "sub",
             "target_level": comp.get("target_level"),
             "amazon_equiv": comp.get("amazon_equiv"),
@@ -872,9 +860,9 @@ def build_orgs(orgs_data, rows, board_stats=None):
         out.append({
             "name": reqs[0]["company"], "industry": None,
             "industry_label": "unclassified", "sector": None,
-            "arch": None, "arch_label": "", "fit": None, "fit_label": "",
+            "arch": None, "arch_label": "unclassified", "fit": None, "fit_label": "unclassified",
             "traffic": False, "warm": False, "relationship": "unknown",
-            "rel_note": "", "rel_url": "", "team": "", "why": "",
+            "rel_url": "", "team": "",
             "locations": "", "careers": "", "polled": True,
             "gauge": None, "geo": [],
             "scanned": (board_stats.get(board) or {}).get("live"),
@@ -897,9 +885,25 @@ def build_orgs(orgs_data, rows, board_stats=None):
     return out
 
 
-def render(state, slug, apps=(), orgs_data=(), dismissed=()):
-    rows = build_rows(state, apps)
-    orgs = build_orgs(orgs_data, rows, state.get("boards") or {})
+def render(state, slug, orgs_data=(), dismissed=()):
+    # Application records are not public output. Do not pass them here and
+    # do not sanitize them: extra keys such as interview_style would fail
+    # closed and stall the board. Only the public projection is sanitized.
+    # sanitize raises SanitizerBlocked and returns nothing if a record is
+    # unsafe; this function then writes no files.
+    reset_drops()
+    state = sanitize(state)
+    dismissed = sanitize({"dismissed": list(dismissed)})["dismissed"]
+    rows = build_rows(state)
+    try:
+        orgs = sanitize_records(
+            build_orgs(list(orgs_data), rows, state.get("boards") or {}),
+            accumulate=True,
+        )
+    except VocabMiss as exc:
+        record_vocab_drop(exc.field)
+        check_drop_budget()
+        orgs = []
     skills_svg, skills_n = skills_chart(rows)
     boards = state.get("boards") or {}
     ok = [b for b in boards.values() if b.get("status") == "ok"]
@@ -921,29 +925,6 @@ def render(state, slug, apps=(), orgs_data=(), dismissed=()):
         for b in sorted(boards.values(), key=lambda x: (-(x.get("matches") or 0), x["company"]))
     )
 
-    action = [a for a in apps if a.get("status") in ACTION_STATUSES]
-    alert_html = ""
-    if action:
-        items = "".join(
-            "<li><b>{co}</b>, {t}. {n}</li>".format(co=esc_html(a["company"]), t=esc_html(a["title"]), n=esc_html(a.get("note") or ""))
-            for a in action
-        )
-        alert_html = (
-            '<div class="alert"><h3>{n} application{p} need a look</h3><ul>{items}</ul></div>'
-        ).format(n=len(action), p="" if len(action) == 1 else "s", items=items)
-
-    app_rows = "".join(
-        '<tr><td class="w">{co}</td><td>{t}</td>'
-        '<td class="w"><span class="stat-badge {cls}">{lab}</span></td>'
-        '<td class="note">{n}</td></tr>'.format(
-            co=esc_html(a["company"]),
-            t=esc_html(a["title"]),
-            cls=STATUS_META[a["status"]]["cls"],
-            lab=STATUS_META[a["status"]]["label"],
-            n=esc_html(a.get("note") or ""),
-        )
-        for a in sorted(apps, key=lambda x: (x["status"] not in ACTION_STATUSES, x["company"]))
-    )
     comp_labels = {c["key"]: c["label"] for c in COMPETENCIES}
     comp_labels[FALLBACK_COMPETENCY["key"]] = FALLBACK_COMPETENCY["label"]
     used = [c for c in list(COMPETENCIES) + [FALLBACK_COMPETENCY]
@@ -1004,16 +985,12 @@ def render(state, slug, apps=(), orgs_data=(), dismissed=()):
             t=esc_html(", ".join(c["terms"]) or "anything the rules above did not claim"))
         for c in list(COMPETENCIES) + [FALLBACK_COMPETENCY]
     )
-    applied_count = sum(1 for r in rows if r.get("status"))
-    rejected_count = sum(1 for a in apps if a.get("status") == "rejected")
     banded_count = sum(1 for r in rows if r.get("pay"))
 
     options = "".join('<option value="{c}">{c}</option>'.format(c=esc_html(o["name"]))
                       for o in sorted(orgs, key=lambda x: x["name"]))
 
     js = JS % {
-        "status": json.dumps(STATUS_META),
-        "resumes": json.dumps(RESUMES),
         "comps": json.dumps(comp_labels),
         "tier": json.dumps(TIER_META),
         "orgs": json.dumps(orgs, ensure_ascii=False),
@@ -1048,13 +1025,10 @@ def render(state, slug, apps=(), orgs_data=(), dismissed=()):
     <li><b>%(matched)d</b><span>reqs matched</span></li>
     <li><b>%(scanned)s</b><span>reqs scanned</span></li>
     <li><b>%(nboards)d</b><span>boards polled</span></li>
-    <li><b>%(applied)d</b><span>applied, still live</span></li>
-    <li><b>%(rejected)d</b><span>rejected</span></li>
     <li><b>%(banded)d</b><span>publish a band</span></li>
     <li><b>%(sde)d</b><span>flagged SDE</span></li>
     <li><b>%(last)s</b><span>last run, UTC</span></li>
   </ul>
-  %(alert)s
 </header>
 
 <section class="panel">
@@ -1083,66 +1057,61 @@ def render(state, slug, apps=(), orgs_data=(), dismissed=()):
 <div class="controls">
   <div class="ctl-row">
     <span class="ctl-label">Sector</span>
-    <button class="chip" data-f="sector" data-v="all" aria-pressed="true">All</button>
-    <button class="chip" data-f="sector" data-v="big_tech" aria-pressed="false">Big tech</button>
-    <button class="chip" data-f="sector" data-v="ai_lab" aria-pressed="false">AI lab</button>
-    <button class="chip" data-f="sector" data-v="cyber" aria-pressed="false">Cyber</button>
-    <button class="chip" data-f="sector" data-v="other" aria-pressed="false">Other</button>
-    <button class="chip" data-f="sector" data-v="gov" aria-pressed="false">Government</button>
+    <button class="chip" facet="sector" val="all" aria-pressed="true">All</button>
+    <button class="chip" facet="sector" val="big_tech" aria-pressed="false">Big tech</button>
+    <button class="chip" facet="sector" val="ai_lab" aria-pressed="false">AI lab</button>
+    <button class="chip" facet="sector" val="cyber" aria-pressed="false">Cyber</button>
+    <button class="chip" facet="sector" val="other" aria-pressed="false">Other</button>
+    <button class="chip" facet="sector" val="gov" aria-pressed="false">Government</button>
   </div>
   <div class="ctl-row">
     <span class="ctl-label">Level</span>
-    <button class="chip" data-f="move" data-v="all" aria-pressed="true">In scope, L6+</button>
-    <button class="chip" data-f="move" data-v="up" aria-pressed="false">Up-level</button>
-    <button class="chip" data-f="move" data-v="lateral" aria-pressed="false">Lateral</button>
-    <button class="chip" data-f="move" data-v="unknown" aria-pressed="false">Unresolved</button>
-    <button class="chip" data-f="move" data-v="down" aria-pressed="false">Down-level</button>
+    <button class="chip" facet="move" val="all" aria-pressed="true">In scope, L6+</button>
+    <button class="chip" facet="move" val="up" aria-pressed="false">Up-level</button>
+    <button class="chip" facet="move" val="lateral" aria-pressed="false">Lateral</button>
+    <button class="chip" facet="move" val="unknown" aria-pressed="false">Unresolved</button>
+    <button class="chip" facet="move" val="down" aria-pressed="false">Down-level</button>
   </div>
   <div class="ctl-row">
     <span class="ctl-label">Comp</span>
-    <button class="chip" data-f="paytier" data-v="all" aria-pressed="true">Any</button>
-    <button class="chip" data-f="paytier" data-v="400" aria-pressed="false">$400K+</button>
-    <button class="chip" data-f="paytier" data-v="450" aria-pressed="false">$450K+</button>
-    <button class="chip" data-f="paytier" data-v="600" aria-pressed="false">$600K+</button>
-    <button class="chip" data-t="banded" aria-pressed="false">Has posted band</button>
+    <button class="chip" facet="paytier" val="all" aria-pressed="true">Any</button>
+    <button class="chip" facet="paytier" val="400" aria-pressed="false">$400K+</button>
+    <button class="chip" facet="paytier" val="450" aria-pressed="false">$450K+</button>
+    <button class="chip" facet="paytier" val="600" aria-pressed="false">$600K+</button>
+    <button class="chip" tog="banded" aria-pressed="false">Has posted band</button>
   </div>
   <div class="ctl-row">
     <span class="ctl-label">Fit</span>
-    <button class="chip" data-f="fit" data-v="all" aria-pressed="true">All</button>
-    <button class="chip" data-f="fit" data-v="core" aria-pressed="false">Core mandate</button>
-    <button class="chip" data-f="fit" data-v="strong" aria-pressed="false">Strong</button>
-    <button class="chip" data-f="fit" data-v="adj" aria-pressed="false">Adjacent</button>
-    <button class="chip" data-t="traffic" aria-pressed="false">Hostile traffic at scale</button>
-    <button class="chip" data-t="customer" aria-pressed="false">Warm channel</button>
-    <button class="chip" data-f="rel" data-v="competitor" aria-pressed="false">Shield competitor</button>
-    <button class="chip" data-f="rel" data-v="customer" aria-pressed="false">AWS customer</button>
-    <button class="chip" data-t="open" aria-pressed="false">Has live reqs</button>
+    <button class="chip" facet="fit" val="all" aria-pressed="true">All</button>
+    <button class="chip" facet="fit" val="core" aria-pressed="false">Core mandate</button>
+    <button class="chip" facet="fit" val="strong" aria-pressed="false">Strong</button>
+    <button class="chip" facet="fit" val="adj" aria-pressed="false">Adjacent</button>
+    <button class="chip" tog="traffic" aria-pressed="false">Hostile traffic at scale</button>
+    <button class="chip" tog="customer" aria-pressed="false">Warm channel</button>
+    <button class="chip" facet="rel" val="competitor" aria-pressed="false">Shield competitor</button>
+    <button class="chip" facet="rel" val="customer" aria-pressed="false">AWS customer</button>
+    <button class="chip" tog="open" aria-pressed="false">Has live reqs</button>
   </div>
   <div class="ctl-row">
-    <span class="ctl-label">Mine</span>
-    <button class="chip" data-f="app" data-v="all" aria-pressed="true">Everything</button>
-    <button class="chip" data-f="app" data-v="applied" aria-pressed="false">Applied to</button>
-    <button class="chip" data-f="app" data-v="open" aria-pressed="false">Not yet applied</button>
-    <button class="chip" data-f="app" data-v="accepted" aria-pressed="false">Accepted</button>
-    <button class="chip" data-f="app" data-v="rejected" aria-pressed="false">Rejected</button>
+    <span class="ctl-label">Hidden</span>
     <button class="chip" id="hidechip" aria-pressed="false">Hidden</button>
     <button class="chip" id="hideexport">Copy hidden list</button>
   </div>
   <div class="ctl-row">
     <span class="ctl-label">Where</span>
-    <button class="chip" data-f="place" data-v="all" aria-pressed="true">Anywhere</button>
-    <button class="chip" data-f="place" data-v="remote" aria-pressed="false">Remote</button>
-    <button class="chip" data-f="place" data-v="us" aria-pressed="false">US site</button>
-    <button class="chip" data-f="place" data-v="multi" aria-pressed="false">Multi site</button>
-    <button class="chip" data-f="place" data-v="unclear" aria-pressed="false">Unstated</button>
+    <button class="chip" facet="place" val="all" aria-pressed="true">Anywhere</button>
+    <button class="chip" facet="place" val="remote" aria-pressed="false">Remote</button>
+    <button class="chip" facet="place" val="us" aria-pressed="false">US site</button>
+    <button class="chip" facet="place" val="multi" aria-pressed="false">Multi site</button>
+    <button class="chip" facet="place" val="unclear" aria-pressed="false">Unstated</button>
   </div>
   <div class="ctl-row">
     <span class="ctl-label">Signal</span>
-    <button class="chip" data-f="tier" data-v="all" aria-pressed="true">All</button>
-    <button class="chip" data-f="tier" data-v="rare" aria-pressed="false">Names the discipline</button>
-    <button class="chip" data-f="tier" data-v="direct" aria-pressed="false">Traffic adjacent</button>
-    <button class="chip" data-f="tier" data-v="wide" aria-pressed="false">Wide term</button>
-    <button class="chip" data-t="sde" aria-pressed="false">SDE signal</button>
+    <button class="chip" facet="tier" val="all" aria-pressed="true">All</button>
+    <button class="chip" facet="tier" val="rare" aria-pressed="false">Names the discipline</button>
+    <button class="chip" facet="tier" val="direct" aria-pressed="false">Traffic adjacent</button>
+    <button class="chip" facet="tier" val="wide" aria-pressed="false">Wide term</button>
+    <button class="chip" tog="sde" aria-pressed="false">SDE signal</button>
   </div>
   <div class="ctl-row">
     <span class="ctl-label">Slice</span>
@@ -1158,20 +1127,6 @@ def render(state, slug, apps=(), orgs_data=(), dismissed=()):
 </div>
 
 <div id="list"></div>
-
-<section class="panel">
-  <h2>Where my applications stand</h2>
-  <p class="sub">Hand maintained from the confirmation mail. jobwatch itself never submits anything, so this
-  is the one part of the page I have to keep honest by hand. A req I have applied to still shows in the list
-  above with its badge, because it closing is exactly the thing I want to hear about.</p>
-  <div class="scroll">
-    <table class="apps">
-      <thead><tr><th>Company</th><th>Role</th><th>Status</th><th>Note</th></tr></thead>
-      <tbody>%(app_rows)s</tbody>
-    </table>
-  </div>
-  <p class="hint">Scroll the table sideways for the full row.</p>
-</section>
 
 <section class="panel">
   <h2>Coverage on the last run</h2>
@@ -1325,9 +1280,6 @@ def render(state, slug, apps=(), orgs_data=(), dismissed=()):
         "slug": slug,
         "city": esc_html(SITE_CITY),
         "run_time": esc_html(SITE_RUN_TIME),
-        "alert": alert_html,
-        "app_rows": app_rows,
-        "applied": applied_count,
         "comp_options": comp_options,
         "ind_options": ind_options,
         "sector_rows": sector_rows,
@@ -1337,9 +1289,10 @@ def render(state, slug, apps=(), orgs_data=(), dismissed=()):
         "skills_svg": skills_svg,
         "skills_n": skills_n,
         "comp_rows": comp_rows,
-        "rejected": rejected_count,
         "banded": banded_count,
     }
+    scan_public_text(html)
+    scan_public_text(js)
     return html, js
 
 
@@ -1352,25 +1305,48 @@ def main():
     if not SLUG_RE.match(args.slug):
         parser.error("--slug must match [A-Za-z0-9_-]{1,64}; it becomes a file name and an object key")
 
-    with open(STATE_PATH, "r", encoding="utf-8") as handle:
-        state = json.load(handle)
+    try:
+        with open(STATE_PATH, "r", encoding="utf-8") as handle:
+            state = sanitize(handle.read())
 
-    apps = []
-    if os.path.exists(APPS_PATH):
-        with open(APPS_PATH, "r", encoding="utf-8") as handle:
-            apps = json.load(handle).get("applications", [])
+        # applications.json is local tracker data. It is not read here.
+        # Extra per-record keys (interview_style, dated notes) must not
+        # reach sanitize or they would fail closed and block the board.
 
-    orgs_data = []
-    if os.path.exists(ORGS_PATH):
-        with open(ORGS_PATH, "r", encoding="utf-8") as handle:
-            orgs_data = json.load(handle).get("organizations", [])
+        orgs_data = []
+        if os.path.exists(ORGS_PATH):
+            with open(ORGS_PATH, "r", encoding="utf-8") as handle:
+                try:
+                    raw_orgs = json.loads(handle.read())
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    raise SanitizerBlocked("invalid JSON") from exc
+            if not isinstance(raw_orgs, dict):
+                raise SanitizerBlocked("organizations file is not a dict")
+            orgs_data = raw_orgs.get("organizations") or []
+            if not isinstance(orgs_data, list):
+                raise SanitizerBlocked("organizations is not a list")
 
-    dismissed = []
-    if os.path.exists(HIDDEN_PATH):
-        with open(HIDDEN_PATH, "r", encoding="utf-8") as handle:
-            dismissed = json.load(handle).get("dismissed", [])
+        dismissed = []
+        if os.path.exists(HIDDEN_PATH):
+            with open(HIDDEN_PATH, "r", encoding="utf-8") as handle:
+                dismissed = sanitize(handle.read()).get("dismissed", [])
 
-    html, js = render(state, args.slug, apps, orgs_data, dismissed)
+        html, js = render(state, args.slug, orgs_data, dismissed)
+        print(format_drop_counts(last_drop_counts()), file=sys.stderr)
+    except SanitizerBlocked as exc:
+        # Fail closed: do not write HTML or JS, even leftovers from an older run.
+        print("sanitizer blocked public page: {}".format(exc), file=sys.stderr)
+        raise SystemExit(2)
+    except VocabMiss as exc:
+        record_vocab_drop(exc.field)
+        try:
+            check_drop_budget()
+        except SanitizerBlocked as blocked:
+            print("sanitizer blocked public page: {}".format(blocked), file=sys.stderr)
+            raise SystemExit(2)
+        print("sanitizer blocked public page: {}".format(exc), file=sys.stderr)
+        raise SystemExit(2)
+
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, args.slug), "w", encoding="utf-8") as handle:
         handle.write(html)

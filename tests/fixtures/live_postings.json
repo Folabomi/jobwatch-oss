@@ -1,0 +1,196 @@
+{
+  "polled": "2026-10-16T18:41:20Z",
+  "source": "jobwatch.poll public fields only; no applications, JD text, or PII",
+  "boards_ok": [
+    "cloudflare",
+    "openai",
+    "netflix",
+    "crowdstrike"
+  ],
+  "boards_failed": [],
+  "stats": {
+    "cloudflare": {
+      "company": "Cloudflare",
+      "platform": "greenhouse",
+      "live": 438,
+      "matches": 3,
+      "dropped_non_us": 3,
+      "locations_resolved": 0,
+      "with_posted_band": 2,
+      "with_jd": 6,
+      "status": "ok"
+    },
+    "openai": {
+      "company": "OpenAI",
+      "platform": "ashby",
+      "live": 809,
+      "matches": 3,
+      "dropped_non_us": 0,
+      "locations_resolved": 0,
+      "with_posted_band": 0,
+      "with_jd": 3,
+      "status": "ok"
+    },
+    "netflix": {
+      "company": "Netflix",
+      "platform": "eightfold",
+      "live": 412,
+      "matches": 1,
+      "dropped_non_us": 0,
+      "locations_resolved": 0,
+      "with_posted_band": 0,
+      "with_jd": 0,
+      "status": "ok"
+    },
+    "crowdstrike": {
+      "company": "CrowdStrike",
+      "platform": "workday",
+      "live": 119,
+      "matches": 10,
+      "dropped_non_us": 2,
+      "locations_resolved": 4,
+      "with_posted_band": 10,
+      "with_jd": 12,
+      "status": "ok"
+    }
+  },
+  "match_count": 17,
+  "postings": [
+    {
+      "id": "ashby:openai:3c67f712-697d-48d8-b05c-01be896e61da",
+      "board": "openai",
+      "company": "OpenAI",
+      "title": "Software Engineer, Scaled Abuse",
+      "location": "San Francisco",
+      "url": "https://jobs.ashbyhq.com/openai/3c67f712-697d-48d8-b05c-01be896e61da"
+    },
+    {
+      "id": "ashby:openai:f01b7084-a68d-4e30-ace9-6b5e6d90c517",
+      "board": "openai",
+      "company": "OpenAI",
+      "title": "Technical Threat Investigator, Threat Intel Engineering",
+      "location": "San Francisco; New York City; US - Remote",
+      "url": "https://jobs.ashbyhq.com/openai/f01b7084-a68d-4e30-ace9-6b5e6d90c517"
+    },
+    {
+      "id": "ashby:openai:f956b77c-3cc5-4fdd-9463-2a6e5047e57c",
+      "board": "openai",
+      "company": "OpenAI",
+      "title": "Security Engineer, Detection and Response",
+      "location": "San Francisco; New York City; Seattle; US - Remote",
+      "url": "https://jobs.ashbyhq.com/openai/f956b77c-3cc5-4fdd-9463-2a6e5047e57c"
+    },
+    {
+      "id": "eightfold:netflix:JR42434",
+      "board": "netflix",
+      "company": "Netflix",
+      "title": "Software Engineer (L5) - Traffic Engineering",
+      "location": "Los Gatos,California,United States of America",
+      "url": "https://explore.jobs.netflix.net/careers/job/790318346409"
+    },
+    {
+      "id": "greenhouse:cloudflare:7558153",
+      "board": "cloudflare",
+      "company": "Cloudflare",
+      "title": "Senior Threat Intelligence Engineer",
+      "location": "Austin, US",
+      "url": "https://boards.greenhouse.io/cloudflare/jobs/7558153?gh_jid=7558153"
+    },
+    {
+      "id": "greenhouse:cloudflare:8028403",
+      "board": "cloudflare",
+      "company": "Cloudflare",
+      "title": "Network Security Support Engineer",
+      "location": "Austin, US",
+      "url": "https://boards.greenhouse.io/cloudflare/jobs/8028403?gh_jid=8028403"
+    },
+    {
+      "id": "greenhouse:cloudflare:8282124",
+      "board": "cloudflare",
+      "company": "Cloudflare",
+      "title": "Data Center Strategy - Edge",
+      "location": "Austin, TX; New York, NY; San Francisco, CA",
+      "url": "https://boards.greenhouse.io/cloudflare/jobs/8282124?gh_jid=8282124"
+    },
+    {
+      "id": "workday:crowdstrike:R26576",
+      "board": "crowdstrike",
+      "company": "CrowdStrike",
+      "title": "Sr. Engineer, Cloud Native - AI Detection and Response (AIDR) (Hybrid, Sunnyvale)",
+      "location": "USA - Sunnyvale, CA; USA - Austin, TX; USA - Redmond, WA",
+      "url": "https://crowdstrike.wd5.myworkdayjobs.com/en-US/crowdstrikecareers/job/USA---Sunnyvale-CA/Sr-Engineer--AI---AI-Detection-and-Response--AIDR---Hybrid-_R26576-1"
+    },
+    {
+      "id": "workday:crowdstrike:R27090",
+      "board": "crowdstrike",
+      "company": "CrowdStrike",
+      "title": "Sr Engineer, Cloud Native - AI Detection and Response (AIDR) (HYBRID)",
+      "location": "USA - Sunnyvale, CA; USA - Redmond, WA",
+      "url": "https://crowdstrike.wd5.myworkdayjobs.com/en-US/crowdstrikecareers/job/USA---Sunnyvale-CA/Engineer-III--CICD---AI-Detection-and-Response--AIDR-_R27090"
+    },
+    {
+      "id": "workday:crowdstrike:R28442",
+      "board": "crowdstrike",
+      "company": "CrowdStrike",
+      "title": "Engineer III, Cloud Native - AI Detection and Response (AIDR) (Hybrid)",
+      "location": "USA - Sunnyvale, CA; USA - Austin, TX; USA - Redmond, WA",
+      "url": "https://crowdstrike.wd5.myworkdayjobs.com/en-US/crowdstrikecareers/job/USA---Sunnyvale-CA/Engineer-III--SDET---AI-Detection-and-Response--AIDR---Hybrid-_R28442"
+    },
+    {
+      "id": "workday:crowdstrike:R29787",
+      "board": "crowdstrike",
+      "company": "CrowdStrike",
+      "title": "Sr. Engineer II, Cloud Native - AI Detection and Response (AIDR) (Hybrid, Sunnyvale)",
+      "location": "USA - Sunnyvale, CA",
+      "url": "https://crowdstrike.wd5.myworkdayjobs.com/en-US/crowdstrikecareers/job/USA---Sunnyvale-CA/Sr-Engineer-II--Cloud-Native---AI-Detection-and-Response--AIDR---Hybrid--Sunnyvale-_R29787"
+    },
+    {
+      "id": "workday:crowdstrike:R29795",
+      "board": "crowdstrike",
+      "company": "CrowdStrike",
+      "title": "Senior SDET - AI Detection and Response (AIDR) (Hybrid, Sunnyvale)",
+      "location": "USA - Sunnyvale, CA",
+      "url": "https://crowdstrike.wd5.myworkdayjobs.com/en-US/crowdstrikecareers/job/USA---Sunnyvale-CA/Senior-SDET---AI-Detection-and-Response--AIDR---Hybrid-_R29795"
+    },
+    {
+      "id": "workday:crowdstrike:R29845",
+      "board": "crowdstrike",
+      "company": "CrowdStrike",
+      "title": "Sr. Full Stack Engineer, Cloud Native - AI Detection and Response (AIDR) (Hybrid, Sunnyvale)",
+      "location": "USA - Sunnyvale, CA",
+      "url": "https://crowdstrike.wd5.myworkdayjobs.com/en-US/crowdstrikecareers/job/USA---Sunnyvale-CA/Sr-Full-Stack-Engineer--Cloud-Native---AI-Detection-and-Response--AIDR---Hybrid--Sunnyvale-_R29845"
+    },
+    {
+      "id": "workday:crowdstrike:R29909",
+      "board": "crowdstrike",
+      "company": "CrowdStrike",
+      "title": "Incident Response Senior Consultant (Remote)",
+      "location": "USA - Remote",
+      "url": "https://crowdstrike.wd5.myworkdayjobs.com/en-US/crowdstrikecareers/job/USA---Remote/Incident-Response-Senior-Consultant--Remote-_R29909"
+    },
+    {
+      "id": "workday:crowdstrike:R30067",
+      "board": "crowdstrike",
+      "company": "CrowdStrike",
+      "title": "Sr. Software Engineer II - Cloud Detection Engine (Hybrid)",
+      "location": "USA - New York, NY",
+      "url": "https://crowdstrike.wd5.myworkdayjobs.com/en-US/crowdstrikecareers/job/USA---New-York-NY/Sr-Software-Engineer-II---Cloud-Detection-Engine--Hybrid--London-_R30067"
+    },
+    {
+      "id": "workday:crowdstrike:R30289",
+      "board": "crowdstrike",
+      "company": "CrowdStrike",
+      "title": "Incident Response Consultant (Remote)",
+      "location": "USA - Remote",
+      "url": "https://crowdstrike.wd5.myworkdayjobs.com/en-US/crowdstrikecareers/job/USA---Remote/Incident-Response-Consultant--Remote-_R30289"
+    },
+    {
+      "id": "workday:crowdstrike:R30427",
+      "board": "crowdstrike",
+      "company": "CrowdStrike",
+      "title": "Sr. Threat Hunting Intelligence Analyst II (Remote)",
+      "location": "USA - Remote",
+      "url": "https://crowdstrike.wd5.myworkdayjobs.com/en-US/crowdstrikecareers/job/USA---Remote/Sr-Threat-Hunting-Intelligence-Analyst-II--Remote-_R30427"
+    }
+  ]
+}
