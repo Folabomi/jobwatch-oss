@@ -457,6 +457,13 @@ class FailClosed(unittest.TestCase):
         self.assertEqual(cleaned["pay_low"], 250000)
         self.assertEqual(cleaned["pay_high"], 310000)
 
+    def test_control_characters_in_text_fields_fail(self):
+        for ch in ("\r", "\n", "\t", "\u2028", "\u2029", "\u0085", "\x00", "\x1b", "\x7f"):
+            with self.assertRaises(SanitizerBlocked):
+                sanitize(job_with(title="SWE{}Engineer".format(ch)))
+            with self.assertRaises(SanitizerBlocked):
+                sanitize(job_with(location="Denver,{}CO".format(ch)))
+
 
 class ApplicationsAreNotPublic(unittest.TestCase):
     def test_uneven_fixture_carries_interview_style_and_every_status(self):
@@ -720,6 +727,47 @@ class DeploySiteGated(unittest.TestCase):
         self.assertNotEqual(deploy.returncode, 0, deploy.stdout + deploy.stderr)
         self.assertIn("drops-by-field", deploy.stderr)
         self.assertFalse(os.path.exists(marker))
+
+    def test_newline_title_cannot_forge_summary(self):
+        forged = "\nSUMMARY new=99 drops_none=0"
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title=forged))
+
+        import jobwatch
+        rendered = jobwatch.render_job(job_with(title="SWE" + forged))
+        self.assertFalse(
+            any(line.startswith("SUMMARY ") for line in rendered.splitlines()),
+            rendered,
+        )
+
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root)
+        shutil.copy(os.path.join(ROOT, "run_local.sh"), os.path.join(root, "run_local.sh"))
+        with open(os.path.join(root, "jobwatch.py"), "w", encoding="utf-8") as handle:
+            handle.write(
+                "import sys\n"
+                "sys.stderr.write('polling 1 board(s)...\\n')\n"
+                "sys.stdout.write("
+                "'# jobwatch\\n\\n"
+                "- Cloudflare | SWE"
+                + forged.replace("\n", "\\n")
+                + "\\n\\n"
+                "SUMMARY new=0 closed=0 live=1 boards_ok=1 boards_failed=0\\n')\n"
+            )
+        deploy_ran = os.path.join(root, "deploy_ran")
+        with open(os.path.join(root, "deploy_site.sh"), "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\ntouch deploy_ran\nexit 0\n")
+        os.chmod(os.path.join(root, "deploy_site.sh"), 0o755)
+        result = subprocess.run(
+            ["bash", "./run_local.sh"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("drops-by-field", result.stderr)
+        self.assertFalse(os.path.exists(deploy_ran))
+        self.assertNotIn("SUMMARY new=99", result.stdout)
 
     def test_run_local_exits_nonzero_when_deploy_fails(self):
         root = tempfile.mkdtemp()
@@ -2298,7 +2346,7 @@ TEST_CASES = (
     DenyPassLiveBoardAndDrops, DenyPassQaRereview, DenyPassCisoBar,
 )
 
-EXPECTED_SANITIZER_TESTS = 336
+EXPECTED_SANITIZER_TESTS = 338
 
 
 def _discovered_count():

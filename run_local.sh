@@ -26,9 +26,12 @@ if [ "$POLL_RC" -ne 0 ]; then
   exit "$POLL_RC"
 fi
 
-NEW="$(sed -n 's/^SUMMARY new=\([0-9]*\).*/\1/p' jobwatch_report.md | head -1)"
-LIVE="$(sed -n 's/^SUMMARY .*live=\([0-9]*\).*/\1/p' jobwatch_report.md | head -1)"
-CLOSED="$(sed -n 's/^SUMMARY .*closed=\([0-9]*\).*/\1/p' jobwatch_report.md | head -1)"
+# A title with an embedded newline can forge an earlier SUMMARY line.
+# Counts and the drops gate always use the last SUMMARY line.
+SUMMARY_LINE="$(grep '^SUMMARY ' jobwatch_report.md | tail -1 || true)"
+NEW="$(printf '%s\n' "$SUMMARY_LINE" | sed -n 's/^SUMMARY new=\([0-9]*\).*/\1/p')"
+LIVE="$(printf '%s\n' "$SUMMARY_LINE" | sed -n 's/^SUMMARY .*live=\([0-9]*\).*/\1/p')"
+CLOSED="$(printf '%s\n' "$SUMMARY_LINE" | sed -n 's/^SUMMARY .*closed=\([0-9]*\).*/\1/p')"
 NEW="${NEW:-0}"; LIVE="${LIVE:-0}"; CLOSED="${CLOSED:-0}"
 
 # Publish the page every run so the site always reflects the latest poll,
@@ -39,7 +42,7 @@ DEPLOY_RC=0
 if [ -f .publish_hold ]; then
   echo "held"
 else
-  if ! grep -Eq '^SUMMARY .* drops_[a-z][a-z0-9_]*=[0-9]+( |$)' jobwatch_report.md; then
+  if ! printf '%s\n' "$SUMMARY_LINE" | grep -Eq '^SUMMARY .* drops_[a-z][a-z0-9_]*=[0-9]+( |$)'; then
     echo "run summary missing drops-by-field; refusing deploy" >&2
     exit 2
   fi
@@ -65,7 +68,6 @@ if [ "$NEW" -gt 0 ]; then
   osascript -e "display notification \"$NEW new, $CLOSED closed, $LIVE live\" with title \"jobwatch: $NEW new req(s)\" sound name \"Glass\"" 2>/dev/null || true
 fi
 
-SUMMARY_LINE="$(grep '^SUMMARY ' jobwatch_report.md | head -1 || true)"
 echo "${SUMMARY_LINE:-SUMMARY new=$NEW closed=$CLOSED live=$LIVE}"
 if [ "$DEPLOY_RC" -ne 0 ]; then
   exit "$DEPLOY_RC"

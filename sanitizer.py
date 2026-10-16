@@ -679,6 +679,21 @@ def _strip_format_chars(text):
     return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
 
 
+def _has_control_chars(text):
+    """True if text has a Cc control (including \\r \\n \\t NEL) or U+2028/U+2029."""
+    if not text:
+        return False
+    for ch in text:
+        if unicodedata.category(ch) in {"Cc", "Zl", "Zp"}:
+            return True
+    return False
+
+
+def _assert_no_controls(text):
+    if isinstance(text, str) and _has_control_chars(text):
+        raise SanitizerBlocked("control character in text field")
+
+
 def _strip_comments(text):
     text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
@@ -1619,6 +1634,7 @@ def _redact_text(text, allow_id=False):
     """Public fields are never rewritten to [REDACTED]. A hit fails the page."""
     if not isinstance(text, str):
         raise SanitizerBlocked("free text is not a string")
+    _assert_no_controls(text)
     if not text:
         return text
     if REDACTED in text:
@@ -1698,6 +1714,7 @@ def _sanitize_droppable_map(jobs):
     global _DROP_TOTAL_RECORDS
     cleaned = {}
     for map_key, map_value in jobs.items():
+        _assert_no_controls(map_key)
         if _find_blocked(map_key, allow_id=True):
             raise SanitizerBlocked("blocked map key")
         _DROP_TOTAL_RECORDS += 1
@@ -1712,6 +1729,11 @@ def _sanitize_droppable_map(jobs):
 def _sanitize_value(key, value, expected):
     if not _check_type(key, value, expected):
         raise SanitizerBlocked("wrong type for {}".format(key))
+    if isinstance(value, str):
+        _assert_no_controls(value)
+    elif expected == _STR_LIST:
+        for item in value:
+            _assert_no_controls(item)
     if expected == _STR:
         if key in {"team", "locations", "location"} and _field_is_denied_board_token(key, value):
             raise SanitizerBlocked("blocked {} token".format(key))
@@ -1754,6 +1776,7 @@ def _sanitize_value(key, value, expected):
         cleaned = {}
         miss = None
         for map_key, map_value in value.items():
+            _assert_no_controls(map_key)
             if _find_blocked(map_key):
                 raise SanitizerBlocked("blocked map key")
             try:

@@ -12,6 +12,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 from datetime import datetime, timezone
 
 import requests
@@ -537,14 +538,26 @@ def _public_matches(matches):
     return kept
 
 
+def _one_line(value):
+    """Report fields are single-line. Controls and line separators become spaces."""
+    text = "" if value is None else str(value)
+    return "".join(
+        " " if unicodedata.category(ch) in {"Cc", "Zl", "Zp"} else ch
+        for ch in text
+    )
+
+
 def render_job(match):
     flag = "  [SDE SIGNAL]" if "sde-signal" in match.get("flags", []) else ""
+    terms = ", ".join(_one_line(term) for term in match.get("terms", [])) or "n/a"
     return "\n".join(
         [
-            "- {} | {}{}".format(match["company"], match["title"], flag),
-            "  {}".format(match.get("location") or "location not stated"),
-            "  {}".format(match["url"]),
-            "  id {} | matched {}".format(match["id"], ", ".join(match.get("terms", [])) or "n/a"),
+            "- {} | {}{}".format(
+                _one_line(match["company"]), _one_line(match["title"]), flag,
+            ),
+            "  {}".format(_one_line(match.get("location") or "location not stated")),
+            "  {}".format(_one_line(match["url"])),
+            "  id {} | matched {}".format(_one_line(match["id"]), terms),
         ]
     )
 
@@ -555,7 +568,7 @@ def render_report(matches, previous, ok_slugs, failures, diff_mode, first_run):
 
     lines = []
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    lines.append("# jobwatch {}".format(now))
+    lines.append("# jobwatch {}".format(_one_line(now)))
     lines.append("")
 
     opened = []
@@ -587,19 +600,21 @@ def render_report(matches, previous, ok_slugs, failures, diff_mode, first_run):
     lines.append("")
     lines.append("## Boards")
     lines.append("")
-    lines.append("Polled cleanly: {}".format(", ".join(ok_slugs) or "none"))
+    lines.append("Polled cleanly: {}".format(
+        ", ".join(_one_line(slug) for slug in ok_slugs) or "none"
+    ))
     for slug, reason in failures:
-        lines.append("FAILED {}: {}".format(slug, reason))
+        lines.append("FAILED {}: {}".format(_one_line(slug), _one_line(reason)))
     lines.append("")
     counts = last_drop_counts()
     dropped = sum(counts.values())
     fields = format_drop_counts(counts)
-    lines.append(fields)
+    lines.append(_one_line(fields))
     lines.append("")
     lines.append(
         "SUMMARY new={} closed={} live={} boards_ok={} boards_failed={} drops={} {}".format(
             len(opened), len(closed), len(matches), len(ok_slugs), len(failures),
-            dropped, fields,
+            dropped, _one_line(fields),
         )
     )
     report = "\n".join(lines)
