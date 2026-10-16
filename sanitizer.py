@@ -87,6 +87,7 @@ import re
 import unicodedata
 from urllib.parse import unquote, urlparse, urlunparse
 
+import taxonomy as tx
 from taxonomy import (
     ARCH_LABELS,
     COMPETENCIES,
@@ -338,14 +339,15 @@ _STATUS_WORDS = frozenset({
     "applied", "interview", "interviewing", "offer", "screen", "screening",
     "rejected", "ghosted", "declined", "waitlisted", "withdrew", "withdrawn",
 })
-_ONSITE_WORDS = frozenset({"onsite", "on-site"})
-_STAGE_FIELD_WORDS = _STATUS_WORDS | frozenset({
-    "take-home", "takehome", "final",
-})
+_ONSITE_WORDS = frozenset({"onsite", "on-site", "on site"})
 _DAY_WORDS = frozenset({
     "mon", "tue", "tues", "wed", "thu", "thur", "thurs", "fri", "sat", "sun",
     "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
 })
+_WHEN_WORDS = frozenset({"tmrw", "tomorrow", "today", "next"})
+_STATUS_ABBREV = frozenset({"oa", "hm"})
+_OFFICE_EMOJI = "\U0001F3E2"
+_STATUS_EMOJI_RE = re.compile("[\u2705\u274C\U0001F389\U0001F4C5]")
 _GIVEN_NAMES = frozenset({
     "ada", "alex", "anna", "daniel", "david", "emily", "james", "jane",
     "john", "laura", "mary", "michael", "rachel", "robert", "sarah",
@@ -356,8 +358,9 @@ _DATE_RE = re.compile(r"^\d{1,2}/\d{1,2}(?:/\d{2,4})?$")
 _PHRASE_ALWAYS_RE = re.compile(
     r"(?i)(?:"
     r"\bapplication\s+stage\b"
-    r"|\bfinal\s+round\b"
-    r"|\btake-?home\b"
+    r"|\bgot\s+offer\b"
+    r"|\boffer!"
+    r"|\b(?:oa|hm)\b"
     r"|\b(?:applied|interview|interviewing|offer|screen(?:ing)?)\s*:"
     r"|\b(?:rejected|ghosted|declined|waitlisted|withdrew|withdrawn)\b"
     r"|\b(?:ref'd|referred)\s+by\b"
@@ -368,10 +371,10 @@ _PHRASE_ALWAYS_RE = re.compile(
     r")"
 )
 _WALK_RE = re.compile(
-    r"(?i)(final\s+round|take-?home|phone\s+screen|on-site|w/|"
+    r"(?i)(final\s+round|take-?home|phone\s+screen|on-site|on\s+site|got\s+offer|w/|"
     r"[A-Za-z][A-Za-z']*|\d{1,2}/\d{1,2}(?:/\d{2,4})?|"
     r"[\U0001F300-\U0001FAFF\u2300-\u27BF\u2600-\u26FF]|"
-    r"[()\[\]|·•:\-\u2013\u2014])"
+    r"[()\[\]|·•:!\-\u2013\u2014])"
 )
 
 # Mine/Kanban only in a board context, not "Mine Safety" / "Kanban Tools Engineer".
@@ -752,9 +755,16 @@ def _is_status_follower(token):
         return True
     if folded in _STATUS_WORDS or folded in _ONSITE_WORDS:
         return True
+    if folded in _STATUS_ABBREV:
+        return True
     if folded in {"final", "take-home", "takehome"}:
         return True
     return False
+
+
+def _onsite_in(text):
+    folded = (text or "").casefold()
+    return bool(re.search(r"(?i)\bon[\s-]?site\b", folded))
 
 
 def _application_status_hit(text):
@@ -763,15 +773,18 @@ def _application_status_hit(text):
         return False
     if _PHRASE_ALWAYS_RE.search(text):
         return True
+    if _onsite_in(text) and _OFFICE_EMOJI in text:
+        return True
     tokens = _WALK_RE.findall(text)
     for index, raw in enumerate(tokens):
         folded = raw.casefold()
         nxt = tokens[index + 1].casefold() if index + 1 < len(tokens) else ""
+        nxt_raw = tokens[index + 1] if index + 1 < len(tokens) else ""
         prev = tokens[index - 1] if index else ""
         prev_fold = prev.casefold()
         is_onsite = folded in _ONSITE_WORDS
-        is_status = folded in _STATUS_WORDS or folded in {
-            "final round", "take-home", "take home", "phone screen",
+        is_status = folded in _STATUS_WORDS or folded in _STATUS_ABBREV or folded in {
+            "final round", "take-home", "take home", "phone screen", "got offer",
         }
         if not is_onsite and not is_status:
             continue
@@ -779,14 +792,27 @@ def _application_status_hit(text):
             return True
         if prev_fold == "w/":
             return True
-        if nxt == ":":
+        if nxt in {":", "!"}:
             return True
         if prev and _is_emoji(prev):
+            return True
+        if nxt_raw and _is_emoji(nxt_raw):
             return True
         if prev in _STATUS_SEPS and not (is_onsite and prev in _WORKMODE_SEPS):
             return True
         if is_status and prev in _WORKMODE_SEPS:
             return True
+        if is_onsite:
+            if nxt in _WHEN_WORDS or prev_fold in _WHEN_WORDS:
+                return True
+            if nxt in _DAY_WORDS or prev_fold in _DAY_WORDS:
+                return True
+            if nxt == _OFFICE_EMOJI or prev == _OFFICE_EMOJI:
+                return True
+            if nxt in {"(", "["}:
+                after = tokens[index + 2].casefold() if index + 2 < len(tokens) else ""
+                if after in _DAY_WORDS or after in _WHEN_WORDS:
+                    return True
         if is_status and folded == raw.casefold() and index == 0 and len(tokens) == 1:
             return True
     return False
@@ -808,19 +834,92 @@ def _field_tokens(text):
     return [tok.casefold() for tok in re.findall(r"[A-Za-z][A-Za-z0-9'./-]*", text or "")]
 
 
+# USPS abbreviations and a few sample-corpus cities that taxonomy.US names
+# only via longer phrases (Portland is in the sample orgs; CO/OR/MA/IL are
+# the state tags next to Denver/Portland/Boston/Chicago).
+_USPS_STATES = frozenset({
+    "al", "ak", "az", "ar", "ca", "co", "ct", "dc", "de", "fl", "ga",
+    "hi", "ia", "id", "il", "in", "ks", "ky", "la", "ma", "md", "me",
+    "mi", "mn", "mo", "ms", "mt", "nc", "nd", "ne", "nh", "nj", "nm",
+    "nv", "ny", "oh", "ok", "or", "pa", "ri", "sc", "sd", "tn", "tx",
+    "ut", "va", "vt", "wa", "wi", "wv", "wy", "usa", "us",
+})
+_FIELD_CONNECTORS = frozenset({
+    "and", "or", "of", "the", "a", "an", "for", "to", "in", "at",
+})
+_FIELD_VOCAB_EXTRAS = frozenset({
+    "portland", "defense", "reporting", "sinkholing",
+})
+
+
+def _add_vocab_tokens(bucket, text):
+    if not isinstance(text, str) or not text:
+        return
+    for tok in re.findall(r"[A-Za-z][A-Za-z0-9'./-]*", text):
+        folded = tok.casefold()
+        if not folded:
+            continue
+        bucket.add(folded)
+        if "-" in folded:
+            for part in folded.split("-"):
+                if part:
+                    bucket.add(part)
+        if folded == "defence":
+            bucket.add("defense")
+
+
+def _walk_vocab(obj, bucket, depth=0):
+    if depth > 8:
+        return
+    if isinstance(obj, str):
+        _add_vocab_tokens(bucket, obj)
+    elif isinstance(obj, dict):
+        for key, value in obj.items():
+            if isinstance(key, str):
+                _add_vocab_tokens(bucket, key)
+            _walk_vocab(value, bucket, depth + 1)
+    elif isinstance(obj, (list, tuple, set, frozenset)):
+        for item in obj:
+            _walk_vocab(item, bucket, depth + 1)
+
+
+def _field_allowlist():
+    """Team/locations tokens: BOARDS + taxonomy + city names. Anything else blocks."""
+    bucket = set(_USPS_STATES)
+    bucket.update(_FIELD_CONNECTORS)
+    bucket.update(_FIELD_VOCAB_EXTRAS)
+    import jobwatch
+    _walk_vocab(jobwatch.BOARDS, bucket)
+    for name in dir(tx):
+        if name.startswith("_"):
+            continue
+        value = getattr(tx, name)
+        if callable(value):
+            continue
+        _walk_vocab(value, bucket)
+    return frozenset(bucket)
+
+
+def _normalize_onsite_spacing(text):
+    return re.sub(r"(?i)\bon\s+site\b", "onsite", text or "")
+
+
 def _field_vocab_blocked(key, value):
-    """Team/locations tokens must come from a vocab with no stage words."""
+    """Team/locations is an allowlist. Tokens must come from boards/taxonomy/cities."""
     if not isinstance(value, str) or not value:
         return False
-    tokens = _field_tokens(value)
+    tokens = _field_tokens(_normalize_onsite_spacing(value))
     if key == "team" and tokens == ["kanban"]:
         return True
     if key == "team" and tokens == ["mine"]:
         return True
+    allowed = _field_allowlist()
     for token in tokens:
         if key in {"location", "locations"} and token in _ONSITE_WORDS:
             continue
-        if token in _STAGE_FIELD_WORDS or token == "round":
+        if key in {"location", "locations"} and token in {"location", "locations"}:
+            continue
+        if token not in allowed:
             return True
     return False
 
@@ -1048,6 +1147,8 @@ def _sanitize_url(value):
 def _find_blocked_plain(text):
     if not text:
         return None
+    if _STATUS_EMOJI_RE.search(text):
+        return "application"
     if EMAIL_RE.search(text):
         return "email"
     if PHONE_RE.search(text):

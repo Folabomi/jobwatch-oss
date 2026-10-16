@@ -1166,6 +1166,120 @@ class DenyPassLeaksAndUrls(unittest.TestCase):
         self.assertNotIn("#", cleaned["url"])
 
 
+class DenyPassOnsiteWhenAndAllowlist(unittest.TestCase):
+    def test_title_onsite_paren_day_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="SWE Onsite (Fri)"))
+
+    def test_title_on_site_thu_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="ON SITE THU"))
+
+    def test_title_onsite_tmrw_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="onsite tmrw"))
+
+    def test_title_onsite_tomorrow_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="onsite tomorrow"))
+
+    def test_title_onsite_today_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="onsite today"))
+
+    def test_title_onsite_next_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="onsite next"))
+
+    def test_title_thu_onsite_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="Thu onsite"))
+
+    def test_title_onsite_office_emoji_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="SWE \U0001F3E2 Onsite"))
+
+    def test_team_on_site_thu_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(dict(CLEAN_ORG, team="ON SITE THU"))
+
+    def test_team_onsite_paren_day_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(dict(CLEAN_ORG, team="Onsite (Fri)"))
+
+    def test_team_onsite_office_emoji_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(dict(CLEAN_ORG, team="Onsite \U0001F3E2"))
+
+    def test_got_offer_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="got offer"))
+
+    def test_offer_bang_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="offer!"))
+
+    def test_standalone_oa_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="OA"))
+
+    def test_standalone_hm_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="HM"))
+
+    def test_status_check_emoji_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="SWE \u2705"))
+
+    def test_status_cross_emoji_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(dict(CLEAN_ORG, team="Edge \u274C"))
+
+    def test_status_party_emoji_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("hired \U0001F389")
+
+    def test_status_calendar_emoji_in_locations_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(dict(CLEAN_ORG, locations="Denver \U0001F4C5"))
+
+    def test_team_unknown_token_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(dict(CLEAN_ORG, team="Zebra Unit"))
+
+    def test_locations_unknown_city_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(dict(CLEAN_ORG, locations="Atlantis"))
+
+    def test_team_applied_ai_passes(self):
+        cleaned = sanitize(dict(CLEAN_ORG, team="Applied AI"))
+        self.assertEqual(cleaned["team"], "Applied AI")
+
+    def test_title_final_round_studios_passes(self):
+        cleaned = sanitize(job_with(title="Final Round Studios Engineer"))
+        self.assertEqual(cleaned["title"], "Final Round Studios Engineer")
+
+    def test_title_takehome_assessments_platform_passes(self):
+        cleaned = sanitize(job_with(title="Take-Home Assessments Platform"))
+        self.assertEqual(cleaned["title"], "Take-Home Assessments Platform")
+
+    def test_oauth_is_not_oa_status(self):
+        cleaned = sanitize(job_with(title="OAuth Platform Engineer"))
+        self.assertEqual(cleaned["title"], "OAuth Platform Engineer")
+
+    def test_human_is_not_hm_status(self):
+        cleaned = sanitize(job_with(title="Human Factors Engineer"))
+        self.assertEqual(cleaned["title"], "Human Factors Engineer")
+
+    def test_friday_without_onsite_passes(self):
+        cleaned = sanitize(job_with(title="Friday Incident Response"))
+        self.assertEqual(cleaned["title"], "Friday Incident Response")
+
+    def test_locations_portland_or_passes(self):
+        cleaned = sanitize(dict(CLEAN_ORG, locations="Portland, OR; US Remote"))
+        self.assertEqual(cleaned["locations"], "Portland, OR; US Remote")
+
+
 class DeploySiteHold(unittest.TestCase):
     def test_deploy_site_honors_publish_hold(self):
         root = tempfile.mkdtemp()
@@ -1208,10 +1322,10 @@ TEST_CASES = (
     DenyPassEnumsAndAppPhrases, DenyPassResumeAndEmailObfuscation,
     DenyPassFormatAndBoardNames, DenyPassCommentsAndScript,
     DenyPassDataAndDataset, DeploySiteHold, KnownCompaniesHardcoded,
-    DenyPassLeaksAndUrls,
+    DenyPassLeaksAndUrls, DenyPassOnsiteWhenAndAllowlist,
 )
 
-EXPECTED_SANITIZER_TESTS = 208
+EXPECTED_SANITIZER_TESTS = 236
 
 
 def _discovered_count():

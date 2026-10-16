@@ -357,7 +357,7 @@ table.apps td.note{font-family:'IBM Plex Sans',sans-serif;font-size:13px;color:v
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 """
 
-JS = """
+JS = r"""
 var TIER = %(tier)s;
 var ORGS = %(orgs)s;
 var COMPS = %(comps)s;
@@ -488,7 +488,7 @@ function reqHtml(r){
     '</div>' +
     '<div>' +
       '<p class="loc" title="' + esc(r.location) + '">' + esc(shortLoc(r.location) || 'not stated') + '</p>' +
-      (r.pay ? '<p class="pay"><b>' + money(r.pay[0]) + ' \u2013 ' + money(r.pay[1]) + '</b>' +
+      (r.pay ? '<p class="pay"><b>' + money(r.pay[0]) + ' – ' + money(r.pay[1]) + '</b>' +
                '<span class="paynote">base only</span></p>' : '') +
       '<div class="acts">' +
         '<a class="act" href="' + esc(safeUrl(r.url)) + '" target="_blank" rel="noopener">Open req</a>' +
@@ -560,7 +560,7 @@ function orgHtml(o, reqs){
     comp += '<p class="paynote2">L6 maps to ' + esc(o.target_level) +
             (o.level_conf === 'reported' ? '' : ' (estimate)') + '</p>';
   }
-  var geo = (o.geo && o.geo.length) ? '<p class="tax">' + esc(o.geo.join(' \u00b7 ')) + '</p>' : '';
+  var geo = (o.geo && o.geo.length) ? '<p class="tax">' + esc(o.geo.join(' · ')) + '</p>' : '';
 
   var acts = '';
   if(o.careers) acts += '<a class="act" href="' + esc(safeUrl(o.careers)) + '" target="_blank" rel="noopener">Careers</a>';
@@ -604,8 +604,8 @@ function render(){
   });
   var nHidden = Object.keys(hidden).length;
   document.getElementById('count').textContent =
-    shown.length + ' of ' + ORGS.length + ' orgs \u00b7 ' + reqCount + ' reqs' +
-    (nHidden ? ' \u00b7 ' + nHidden + ' hidden' : '');
+    shown.length + ' of ' + ORGS.length + ' orgs · ' + reqCount + ' reqs' +
+    (nHidden ? ' · ' + nHidden + ' hidden' : '');
   hideChip.textContent = nHidden ? 'Hidden (' + nHidden + ')' : 'Hidden';
   var list = document.getElementById('list');
   if(!shown.length){

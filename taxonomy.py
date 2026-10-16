@@ -455,7 +455,7 @@ AMAZON_LEVEL_RE = re.compile(r"^L(\d{1,2})$", re.IGNORECASE)
 
 
 def level_move(amazon_equiv):
-    """Return 'lateral', 'up', 'down' or 'unknown' for an Amazon-form level.
+    r"""Return 'lateral', 'up', 'down' or 'unknown' for an Amazon-form level.
 
     Deliberately strict. It takes an Amazon level such as "L6", never a target's
     own ladder name, because those are not comparable: Meta E5, Roblox IC4 and
