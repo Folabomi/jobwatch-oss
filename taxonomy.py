@@ -478,14 +478,24 @@ LEVEL_MOVE_LABELS = {
     "unknown": "Level unresolved",
 }
 
-# Exact company names the public page may emit. A person name, or a company
-# with a person glued on ("Acme | Jane Roe"), is not on this list.
-BOARD_COMPANIES = ("Cloudflare", "OpenAI", "Netflix", "CrowdStrike")
+# Sample corpus names the public page may emit. Live board companies are
+# derived from jobwatch.BOARDS at sanitize time so adding Stripe (etc.)
+# publishes without a second hardcoded list.
 SAMPLE_COMPANIES = (
     "Acme Cloud", "Northwind Systems", "Globex Networks", "Initech",
     "Umbrella Media", "Hooli", "Vandelay Industries", "Stark Research",
 )
-KNOWN_COMPANIES = frozenset(BOARD_COMPANIES + SAMPLE_COMPANIES)
+
+
+def board_companies():
+    """Company names from jobwatch.BOARDS. Lazy to avoid an import cycle."""
+    import jobwatch
+    return frozenset(row["company"] for row in jobwatch.BOARDS)
+
+
+def known_companies():
+    """Hardcoded samples plus every live board company."""
+    return board_companies() | frozenset(SAMPLE_COMPANIES)
 
 RELATIONSHIP_ENUM = frozenset({
     "competitor", "customer", "both", "neither", "unknown",

@@ -820,6 +820,22 @@ class KnownCompaniesHardcoded(unittest.TestCase):
         cleaned = sanitize({"name": "Acme Cloud"})
         self.assertEqual(cleaned["name"], "Acme Cloud")
 
+    def test_known_companies_matches_jobwatch_boards(self):
+        import jobwatch
+        boards = {row["company"] for row in jobwatch.BOARDS}
+        known = set(sanitizer._known_companies())
+        self.assertEqual(boards, known - set(tx.SAMPLE_COMPANIES))
+
+    def test_new_board_company_is_publishable(self):
+        import jobwatch
+        extra = jobwatch.BOARDS + (
+            {"slug": "stripe", "company": "Stripe", "platform": "greenhouse", "board": "stripe"},
+        )
+        with mock.patch.object(jobwatch, "BOARDS", extra):
+            self.assertIn("Stripe", sanitizer._known_companies())
+            cleaned = sanitize({"name": "Stripe"})
+            self.assertEqual(cleaned["name"], "Stripe")
+
 
 class DenyPassLeaksAndUrls(unittest.TestCase):
     def test_skill_person_name_is_blocked(self):
@@ -881,6 +897,117 @@ class DenyPassLeaksAndUrls(unittest.TestCase):
     def test_kanban_tools_engineer_passes(self):
         cleaned = sanitize(job_with(title="Kanban Tools Engineer"))
         self.assertEqual(cleaned["title"], "Kanban Tools Engineer")
+
+    def test_offer_management_engineer_passes(self):
+        cleaned = sanitize(job_with(title="Offer Management Engineer"))
+        self.assertEqual(cleaned["title"], "Offer Management Engineer")
+
+    def test_onsite_it_support_passes(self):
+        cleaned = sanitize(job_with(title="Onsite IT Support"))
+        self.assertEqual(cleaned["title"], "Onsite IT Support")
+
+    def test_interviewing_platform_engineer_passes(self):
+        cleaned = sanitize(job_with(title="Interviewing Platform Engineer"))
+        self.assertEqual(cleaned["title"], "Interviewing Platform Engineer")
+
+    def test_senior_applied_researcher_passes(self):
+        cleaned = sanitize(job_with(title="Senior Applied Researcher"))
+        self.assertEqual(cleaned["title"], "Senior Applied Researcher")
+
+    def test_applied_ml_ads_passes(self):
+        cleaned = sanitize(job_with(title="Applied ML, Ads"))
+        self.assertEqual(cleaned["title"], "Applied ML, Ads")
+
+    def test_screening_infrastructure_engineer_passes(self):
+        cleaned = sanitize(job_with(title="Screening Infrastructure Engineer"))
+        self.assertEqual(cleaned["title"], "Screening Infrastructure Engineer")
+
+    def test_location_onsite_austin_passes(self):
+        cleaned = sanitize(job_with(location="Onsite - Austin, TX"))
+        self.assertEqual(cleaned["location"], "Onsite - Austin, TX")
+
+    def test_swe_rejected_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="SWE rejected"))
+
+    def test_ghosted_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("ghosted")
+
+    def test_phone_screen_tue_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("(phone screen Tue)")
+
+    def test_refd_by_jane_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("ref'd by Jane")
+
+    def test_referred_by_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="referred by Jane"))
+
+    def test_declined_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="SWE declined"))
+
+    def test_reference_architecture_passes(self):
+        cleaned = sanitize(job_with(title="Reference architecture"))
+        self.assertEqual(cleaned["title"], "Reference architecture")
+
+    def test_b64_token_in_free_text_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("token amFuZUB4LmNvbQ== leftover")
+
+    def test_b64_token_in_url_path_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(url="https://example.com/jobs/amFuZUB4LmNvbQ=="))
+
+    def test_greenhouse_numeric_job_url_passes(self):
+        url = "https://boards.greenhouse.io/cloudflare/jobs/5891234"
+        cleaned = sanitize(job_with(url=url))
+        self.assertEqual(cleaned["url"], url)
+
+    def test_ashby_uuid_job_url_passes(self):
+        url = "https://jobs.ashbyhq.com/openai/6f8c2e1a-4b3d-4c2a-9f1e-8a7b6c5d4e3f"
+        cleaned = sanitize(job_with(url=url))
+        self.assertEqual(cleaned["url"], url)
+
+    def test_lever_uuid_job_url_passes(self):
+        url = "https://jobs.lever.co/netflix/a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        cleaned = sanitize(job_with(url=url))
+        self.assertEqual(cleaned["url"], url)
+
+    def test_hex_job_id_url_passes(self):
+        url = "https://jobs.ashbyhq.com/openai/6f8c2e1a4b3d4c2a9f1e8a7b6c5d4e3f"
+        cleaned = sanitize(job_with(url=url))
+        self.assertEqual(cleaned["url"], url)
+
+    def test_cyrillic_mine_in_team_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(dict(CLEAN_ORG, team="M\u0456ne"))
+
+    def test_cyrillic_kanban_in_team_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(dict(CLEAN_ORG, team="K\u0430nban"))
+
+    def test_latin_team_passes(self):
+        cleaned = sanitize(dict(CLEAN_ORG, team="Edge Platform"))
+        self.assertEqual(cleaned["team"], "Edge Platform")
+
+    def test_double_escaped_at_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("jr\\\\x40x.com")
+
+    def test_x40_literal_without_escape_passes(self):
+        scan_public_text("jr x40 token in a title")
+
+    def test_punycode_host_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(url="https://xn--nxasmq2b.example/jobs/1"))
+
+    def test_non_ascii_host_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(url="https://m\u00fcnich.example.com/jobs/1"))
 
     def test_hex_at_escape_is_blocked(self):
         with self.assertRaises(SanitizerBlocked):
@@ -967,7 +1094,7 @@ TEST_CASES = (
     DenyPassLeaksAndUrls,
 )
 
-EXPECTED_SANITIZER_TESTS = 151
+EXPECTED_SANITIZER_TESTS = 180
 
 
 def _discovered_count():

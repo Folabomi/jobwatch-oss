@@ -16,11 +16,11 @@ Allowlist
 Built from the records the public page is allowed to emit. Extra keys are
 refused. Missing keys are allowed.
 
-`name` is an exact match against the known company list. `label` is a
-closed enum from taxonomy. `relationship`, `move`, and `pay_note` are
-enums. Application fields are not here: status (as an application
-state), note, last_contact, match, why, relationship_note, rel_note,
-resume.
+`name` is an exact match against the known company list (sample
+corpus plus `jobwatch.BOARDS`). `label` is a closed enum from
+taxonomy. `relationship`, `move`, and `pay_note` are enums.
+Application fields are not here: status (as an application state),
+note, last_contact, match, why, relationship_note, rel_note, resume.
 
 State file (`jobwatch_state.json`):
 
@@ -94,8 +94,8 @@ from taxonomy import (
     FIT_GAUGE,
     FIT_LABELS,
     INDUSTRY_LABELS,
-    KNOWN_COMPANIES,
     LEVEL_MOVE_LABELS,
+    known_companies,
     MOVE_ENUM,
     PAY_NOTE_ENUM,
     RELATIONSHIP_ENUM,
@@ -326,17 +326,37 @@ EMDASH_NAME_RE = re.compile(
 
 MAILTO_RE = re.compile(r"mailto\s*:", re.IGNORECASE)
 
-# Application-tracker phrases. `applied` is a status, not a job-title adjective
-# (Applied Scientist / Applied AI Engineer must pass).
+# Stage words only in a status context: next to a date, a weekday, a person,
+# 'w/', or a status colon or dash. Never as a title prefix (Offer Management,
+# Onsite IT Support, Interviewing Platform, Screening Infrastructure,
+# Applied ML / Applied Researcher). Onsite in a location is allowed.
+_STAGE = r"(?:applied|on-?site|interviewing|offer|screen(?:ing)?)"
+_DATE = r"\d{1,2}/\d{1,2}(?:/\d{2,4})?"
+_DAY = (
+    r"(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?"
+)
+_GIVEN = (
+    r"(?:ada|alex|anna|daniel|david|emily|james|jane|john|"
+    r"laura|mary|michael|rachel|robert|sarah)"
+)
 APP_PHRASE_RE = re.compile(
     r"(?i)(?:"
-    r"\bapplied\s+\d{1,2}/\d{1,2}(?:/\d{2,4})?"
-    r"|\bapplication\s+stage\b"
-    r"|\bonsite\b"
-    r"|\binterviewing\b"
-    r"|\boffer\b(?!\s+(?:a|an|of|to)\b)"
-    r"|\b(?:phone\s+)?screen(?:\s+(?:done|with|scheduled)|ing\b|\s*:|\s+w/)"
-    r"|(?<![a-z])applied(?![ \t]+(?:scientist|ai|engineer|research|science|mathematician)\b)"
+    r"\bapplication\s+stage\b"
+    r"|\b" + _STAGE + r"\s+" + _DATE + r"\b"
+    r"|\b" + _STAGE + r"\s+" + _DAY + r"\b"
+    r"|\b" + _STAGE + r"\s+w/"
+    r"|\b" + _STAGE + r"\s+with\s+" + _GIVEN + r"\b"
+    r"|\b" + _STAGE + r"\s*:"
+    r"|:\s*" + _STAGE + r"\b"
+    r"|(?:^|(?<=[\s(\[\"']))[A-Za-z][A-Za-z0-9+#.]*"
+    r"(?:\s+[A-Za-z][A-Za-z0-9+#.]*)*\s+[\-\u2013\u2014]\s*" + _STAGE + r"\b"
+    r"|^" + _STAGE + r"$"
+    r"|\b(?:rejected|ghosted|declined)\b"
+    r"|\bphone\s+screen\b(?:\s+(?:" + _DAY + r"|" + _DATE + r"|done|with|scheduled|w/))"
+    r"|\(\s*phone\s+screen\b"
+    r"|[\-\u2013\u2014:]\s*phone\s+screen\b"
+    r"|\b(?:ref'd|referred)\s+by\b"
     r")"
 )
 
@@ -366,9 +386,10 @@ _ROLE_OR_ORG_WORDS = frozenset({
     "intel", "investigator", "kanban", "lab", "labs", "lead", "mandate",
     "media", "mine", "mitigation", "network", "networks", "officer",
     "operations", "perimeter", "platform", "principal", "protection",
-    "reliability", "remote", "research", "response", "safety", "science",
-    "scientist", "security", "senior", "sirt", "software", "staff",
-    "systems", "team", "threat", "tools", "traffic", "waf",
+    "reliability", "remote", "research", "researcher", "response", "safety",
+    "science", "scientist", "screening", "security", "senior", "sirt",
+    "software", "staff", "support", "systems", "team", "threat", "tools",
+    "traffic", "waf",
 })
 
 # Given names that turn a following word into a person (Jane Roe, Ada Lovelace).
@@ -382,6 +403,20 @@ BLOCKED_SCHEMES_RE = re.compile(
 )
 
 HTTP_SCHEME_RE = re.compile(r"(?i)(?:^|[\s\"'=])http://")
+
+PUNYCODE_HOST_RE = re.compile(r"(?i)(?:https://|//)[^/\s\"']*xn--")
+
+NON_ASCII_HOST_RE = re.compile(r"https://[^/\s\"']*[^\x00-\x7F]")
+
+B64_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9+])([A-Za-z0-9+]{14,}={0,2})(?![A-Za-z0-9+=])"
+)
+
+UUID_RE = re.compile(
+    r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+
+HEX_ID_RE = re.compile(r"(?i)^[0-9a-f]+$")
 
 URL_KEYS = frozenset({"url", "careers", "relationship_url", "rel_url"})
 
@@ -503,8 +538,12 @@ def _profile_literals():
 
 
 def _known_companies():
-    """Hardcoded taxonomy list only. organizations.json cannot add a name."""
-    return KNOWN_COMPANIES
+    """Sample corpus plus live board companies from jobwatch.BOARDS.
+
+    organizations.json cannot add a name. Adding a board (e.g. Stripe)
+    publishes that company without a second hardcoded list.
+    """
+    return known_companies()
 
 
 def _strip_format_chars(text):
@@ -534,8 +573,15 @@ def _decode_js_escapes(text):
         return chr(int(match.group(1), 16))
     def hx(match):
         return chr(int(match.group(1), 16))
-    text = re.sub(r"\\u([0-9a-fA-F]{4})", uni, text)
-    text = re.sub(r"\\x([0-9a-fA-F]{2})", hx, text)
+    prev = None
+    for _ in range(6):
+        if text == prev:
+            break
+        prev = text
+        if "\\\\" in text:
+            text = text.replace("\\\\", "\\")
+        text = re.sub(r"\\u([0-9a-fA-F]{4})", uni, text)
+        text = re.sub(r"\\x([0-9a-fA-F]{2})", hx, text)
     return text
 
 
@@ -626,7 +672,7 @@ def _script_json_blocked(body):
 def _looks_like_person_name(text):
     if WITH_PERSON_RE.search(text):
         return True
-    known_fold = {name.casefold() for name in KNOWN_COMPANIES}
+    known_fold = {name.casefold() for name in _known_companies()}
     for match in PERSON_TWO_WORD_RE.finditer(text):
         full = match.group(0)
         if full.casefold() in known_fold:
@@ -649,6 +695,65 @@ def _path_has_person(path):
     for match in PATH_NAME_RE.finditer(path or ""):
         tokens = [part.casefold() for part in match.groups() if part]
         if any(token in _GIVEN_NAMES for token in tokens):
+            return True
+    return False
+
+
+def _is_exempt_job_id(token):
+    raw = (token or "").rstrip("=")
+    if not raw:
+        return True
+    if raw.isdigit():
+        return True
+    if UUID_RE.match(raw):
+        return True
+    if HEX_ID_RE.match(raw) and len(raw) >= 8:
+        return True
+    return False
+
+
+def _looks_like_b64(token):
+    if not token or len(token) < 16:
+        return False
+    if _is_exempt_job_id(token):
+        return False
+    if token.endswith("=") or "+" in token:
+        return True
+    if len(token) % 4 == 0 and _b64_email(token):
+        return True
+    return False
+
+
+def _b64_in_text(text):
+    for match in B64_TOKEN_RE.finditer(text or ""):
+        if _looks_like_b64(match.group(1)):
+            return True
+    return False
+
+
+def _host_is_blocked(host):
+    host = (host or "").strip().lower()
+    if not host:
+        return True
+    if "xn--" in host:
+        return True
+    if not host.isascii():
+        return True
+    if not re.fullmatch(r"[a-z0-9.-]+", host):
+        return True
+    return False
+
+
+def _obfuscated_board_token(text):
+    """Cyrillic / lookalike Mine or Kanban. Latin 'Mine Safety' is not this."""
+    if not text:
+        return False
+    for token in re.findall(r"[^\s,;:/\\|]+", text):
+        cleaned = token.strip("()[]{}<>.\"'")
+        if not cleaned or cleaned.isascii():
+            continue
+        folded = _deny_normalize(cleaned)
+        if folded in {"mine", "kanban"} or "mine" in folded or "kanban" in folded:
             return True
     return False
 
@@ -679,8 +784,10 @@ def _query_has_blocked(query):
         if not sep:
             val = part
         val = _decode_percent(val)
-        if EMAIL_RE.search(val) or _b64_email(val):
+        if EMAIL_RE.search(val) or _b64_email(val) or _b64_in_text(val):
             return True
+    if _b64_in_text(query) or _b64_in_text(decoded):
+        return True
     return False
 
 
@@ -694,10 +801,15 @@ def _sanitize_url(value):
         raise SanitizerBlocked("url scheme is not https")
     if not parsed.netloc:
         raise SanitizerBlocked("url host is missing")
+    host = parsed.hostname or parsed.netloc.split("@")[-1].split(":")[0]
+    if _host_is_blocked(host) or _host_is_blocked(parsed.netloc.split("@")[-1].split(":")[0]):
+        raise SanitizerBlocked("url host is not ascii")
     if _query_has_blocked(parsed.query) or _query_has_blocked(parsed.fragment):
         raise SanitizerBlocked("url query is blocked")
     if _path_has_person(parsed.path):
         raise SanitizerBlocked("url path has a person name")
+    if _b64_in_text(parsed.path):
+        raise SanitizerBlocked("url path has a base64 token")
     cleaned = urlunparse(("https", parsed.netloc, parsed.path, "", "", ""))
     leftover = _find_blocked(cleaned)
     if leftover:
@@ -750,6 +862,10 @@ def _find_blocked_plain(text):
         return "scheme"
     if HTTP_SCHEME_RE.search(text):
         return "scheme"
+    if PUNYCODE_HOST_RE.search(text) or NON_ASCII_HOST_RE.search(text):
+        return "host"
+    if _b64_in_text(text):
+        return "base64"
     if _looks_like_person_name(text):
         return "name"
     if _path_has_person(text):
@@ -770,6 +886,8 @@ def _find_blocked(text):
         return None
     if not isinstance(text, str):
         return "public text is not a string"
+    if _obfuscated_board_token(text):
+        return "board_name"
     hit = _find_blocked_plain(text)
     if hit:
         return hit
