@@ -478,6 +478,45 @@ LEVEL_MOVE_LABELS = {
     "unknown": "Level unresolved",
 }
 
+# Exact company names the public page may emit. A person name, or a company
+# with a person glued on ("Acme | Jane Roe"), is not on this list.
+BOARD_COMPANIES = ("Cloudflare", "OpenAI", "Netflix", "CrowdStrike")
+SAMPLE_COMPANIES = (
+    "Acme Cloud", "Northwind Systems", "Globex Networks", "Initech",
+    "Umbrella Media", "Hooli", "Vandelay Industries", "Stark Research",
+)
+KNOWN_COMPANIES = frozenset(BOARD_COMPANIES + SAMPLE_COMPANIES)
+
+RELATIONSHIP_ENUM = frozenset({
+    "competitor", "customer", "both", "neither", "unknown",
+})
+MOVE_ENUM = frozenset(LEVEL_MOVE_LABELS)
+
+PAY_NOTE_ENUM = frozenset({
+    "",
+    "Band posted per req",
+    "Reported median",
+    "Estimated median",
+    "Estimated band",
+    "Nonprofit band",
+})
+
+
+def classify_pay_note(note):
+    """Map a local compensation note to a public pay_note enum value."""
+    text = (note or "").strip().lower()
+    if not text:
+        return ""
+    if "nonprofit" in text:
+        return "Nonprofit band"
+    if "band posted" in text:
+        return "Band posted per req"
+    if "estimate" in text or text.startswith("est"):
+        return "Estimated median" if "median" in text else "Estimated band"
+    if "median" in text:
+        return "Reported median"
+    return "Estimated band"
+
 # Down-level is gated: excluded from the default view, reachable only on request.
 GATED_LEVEL_MOVES = ("down",)
 

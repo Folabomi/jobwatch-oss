@@ -228,6 +228,14 @@ class CompanyNameAndLabel(unittest.TestCase):
         self.assertEqual(cleaned["name"], "Acme Cloud")
         self.assertEqual(cleaned["label"], "Core mandate")
 
+    def test_person_name_is_not_a_known_company(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize({"name": "Jane Roe"})
+
+    def test_company_pipe_person_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize({"name": "Acme | Jane Roe"})
+
     def test_board_status_ok_passes(self):
         cleaned = sanitize({"company": "Acme Cloud", "status": "ok"})
         self.assertEqual(cleaned["status"], "ok")
@@ -272,7 +280,7 @@ class NamePattern(unittest.TestCase):
         self.assertIn(sanitizer.REDACTED, cleaned["title"])
 
     def test_labeled_applicant_name_is_redacted(self):
-        cleaned = sanitize(job_with(title="Name: Ada Lovelace applied last week."))
+        cleaned = sanitize(job_with(title="Name: Ada Lovelace on the hiring loop."))
         self.assertNotIn("Ada Lovelace", cleaned["title"])
         self.assertIn(sanitizer.REDACTED, cleaned["title"])
 
@@ -598,10 +606,7 @@ class PublishHold(unittest.TestCase):
         claw_ran = os.path.join(root, "claw_ran")
         with open(os.path.join(root, "deploy_site.sh"), "w", encoding="utf-8") as handle:
             handle.write("#!/bin/sh\ntouch deploy_ran\nexit 0\n")
-        with open(os.path.join(root, "monoclaw_push.sh"), "w", encoding="utf-8") as handle:
-            handle.write("#!/bin/sh\ntouch claw_ran\nexit 0\n")
         os.chmod(os.path.join(root, "deploy_site.sh"), 0o755)
-        os.chmod(os.path.join(root, "monoclaw_push.sh"), 0o755)
         with open(os.path.join(root, ".publish_hold"), "w", encoding="utf-8") as handle:
             handle.write("hold\n")
         result = subprocess.run(
@@ -615,7 +620,212 @@ class PublishHold(unittest.TestCase):
         self.assertIn("SUMMARY new=0", result.stdout)
         self.assertTrue(os.path.exists(os.path.join(root, "jobwatch_report.md")))
         self.assertFalse(os.path.exists(deploy_ran))
-        self.assertFalse(os.path.exists(claw_ran))
+        with io.open(os.path.join(ROOT, "run_local.sh"), encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertNotIn("monoclaw_push.sh", source)
+
+
+class DenyPassCaseInsensitive(unittest.TestCase):
+    def test_lowercase_recruiter_name_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("recruiter: jane roe")
+
+    def test_recruiter_single_given_name_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("Recruiter: Jane")
+
+    def test_application_stage_onsite_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("application stage: onsite")
+
+    def test_recruiter_loop_without_a_name_passes(self):
+        scan_public_text("recruiter loop completed for Acme Cloud")
+
+
+class DenyPassEnumsAndAppPhrases(unittest.TestCase):
+    def test_free_text_relationship_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(dict(CLEAN_ORG, relationship="best friends"))
+
+    def test_known_relationship_passes(self):
+        cleaned = sanitize(dict(CLEAN_ORG, relationship="competitor"))
+        self.assertEqual(cleaned["relationship"], "competitor")
+
+    def test_free_text_move_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize({"name": "Acme Cloud", "move": "promo"})
+
+    def test_known_move_passes(self):
+        cleaned = sanitize({"name": "Acme Cloud", "move": "lateral"})
+        self.assertEqual(cleaned["move"], "lateral")
+
+    def test_free_text_pay_note_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize({"name": "Acme Cloud", "pay_note": "ask Jane Roe"})
+
+    def test_enum_pay_note_passes(self):
+        cleaned = sanitize({"name": "Acme Cloud", "pay_note": "Band posted per req"})
+        self.assertEqual(cleaned["pay_note"], "Band posted per req")
+
+    def test_title_applied_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="applied"))
+
+    def test_title_onsite_date_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="onsite 10/20"))
+
+    def test_title_applied_date_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="applied 10/1"))
+
+    def test_clean_title_passes(self):
+        cleaned = sanitize(job_with(title="DDoS Mitigation Engineer"))
+        self.assertEqual(cleaned["title"], "DDoS Mitigation Engineer")
+
+
+class DenyPassResumeAndEmailObfuscation(unittest.TestCase):
+    def test_underscore_resume_filename_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("jane_roe_resume_v3")
+
+    def test_camelcase_cv_filename_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("JaneRoe-CV.txt")
+
+    def test_resume_variant_phrase_passes(self):
+        scan_public_text("Competency map, and which CV each one leads with")
+
+    def test_split_email_concat_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("""'a"+"@"+"b'""")
+
+    def test_plus_without_an_at_passes(self):
+        scan_public_text("a plus b in the title")
+
+    def test_at_dot_spelling_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("ada [at] example [dot] com")
+
+    def test_at_the_edge_passes(self):
+        scan_public_text("on call at the edge")
+
+    def test_recursively_encoded_at_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("ada&amp;amp;#64;example.com")
+
+    def test_ampersand_without_an_entity_passes(self):
+        scan_public_text("Edge & DDoS at Acme Cloud")
+
+
+class DenyPassFormatAndBoardNames(unittest.TestCase):
+    def test_soft_hyphen_in_email_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("ada\u00ad@example.com")
+
+    def test_hyphenated_discipline_passes(self):
+        scan_public_text("US-only DDoS-mitigation seat")
+
+    def test_mine_board_name_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("open the Mine board")
+
+    def test_kanban_board_name_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("sync the Kanban")
+
+    def test_cyrillic_mine_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("M\u0456ne")
+
+    def test_hidden_chip_label_passes(self):
+        scan_public_text("Hidden")
+
+
+class DenyPassCommentsAndScript(unittest.TestCase):
+    def test_unclosed_block_comment_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("secret /* ada@example.com")
+
+    def test_comment_split_token_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("CA/*x*/RDS")
+
+    def test_standalone_block_comment_passes(self):
+        scan_public_text("/* layout */ Acme Cloud hiring")
+
+    def test_script_json_note_key_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text('<script type="text/json">{"note":"ping"}</script>')
+
+    def test_script_json_applied_key_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text('<script>{"applied":true}</script>')
+
+    def test_unclosed_script_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text('<script>{"company":"Acme Cloud"}')
+
+    def test_js_unicode_at_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("ada\\u0040example.com")
+
+    def test_clean_closed_script_json_passes(self):
+        scan_public_text('<script>{"company":"Acme Cloud","tier":"rare"}</script>')
+
+
+class DenyPassDataAndDataset(unittest.TestCase):
+    def test_arbitrary_data_attr_email_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text('<div data-foo="ada@example.com">Acme Cloud</div>')
+
+    def test_data_tier_passes(self):
+        scan_public_text('<div data-tier="rare">Acme Cloud</div>')
+
+    def test_dataset_notes_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("el.dataset.notes = 'ping'")
+
+    def test_dataset_tier_passes(self):
+        scan_public_text("el.dataset.tier = 'rare'")
+
+    def test_obj_notes_access_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text('obj["notes"]')
+
+    def test_obj_tier_access_passes(self):
+        scan_public_text('obj["tier"]')
+
+
+class DeploySiteHold(unittest.TestCase):
+    def test_deploy_site_honors_publish_hold(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root)
+        shutil.copy(os.path.join(ROOT, "deploy_site.sh"), os.path.join(root, "deploy_site.sh"))
+        with open(os.path.join(root, ".publish_hold"), "w", encoding="utf-8") as handle:
+            handle.write("hold\n")
+        bindir = os.path.join(root, "bin")
+        os.makedirs(bindir)
+        marker = os.path.join(root, "aws_ran")
+        aws = os.path.join(bindir, "aws")
+        with open(aws, "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\necho aws_called >> \"$MARKER\"\nexit 0\n")
+        os.chmod(aws, os.stat(aws).st_mode | stat.S_IEXEC)
+        env = os.environ.copy()
+        env.update({
+            "PATH": bindir + os.pathsep + env.get("PATH", ""),
+            "MARKER": marker,
+        })
+        result = subprocess.run(
+            ["bash", "./deploy_site.sh"],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("publish hold", result.stdout)
+        self.assertFalse(os.path.exists(marker))
 
 
 TEST_CASES = (
@@ -625,15 +835,29 @@ TEST_CASES = (
     ApiKeyPattern, DenyPassHomoglyph, DenyPassMailtoEntity,
     DenyPassCommentSplit, DenyPassEmDashName, DenyPassScriptJson,
     DenyPassDataAttr, FailClosed, ApplicationsAreNotPublic, SampleCorpus,
-    StatusMetaLocal, DeploySiteGated, PublishHold,
+    StatusMetaLocal, DeploySiteGated, PublishHold, DenyPassCaseInsensitive,
+    DenyPassEnumsAndAppPhrases, DenyPassResumeAndEmailObfuscation,
+    DenyPassFormatAndBoardNames, DenyPassCommentsAndScript,
+    DenyPassDataAndDataset, DeploySiteHold,
 )
 
+EXPECTED_SANITIZER_TESTS = 124
 
-if __name__ == "__main__":
-    EXPECTED = 78
-    found = sum(
+
+def _discovered_count():
+    return sum(
         len(unittest.TestLoader().loadTestsFromTestCase(cls)._tests)
         for cls in TEST_CASES
     )
-    assert found == EXPECTED, "expected {} tests, collected {}".format(EXPECTED, found)
+
+
+def setUpModule():
+    found = _discovered_count()
+    if found != EXPECTED_SANITIZER_TESTS:
+        raise AssertionError(
+            "expected {} tests, collected {}".format(EXPECTED_SANITIZER_TESTS, found)
+        )
+
+
+if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -192,8 +192,9 @@ except the AWS profile already on the machine. `run_local.sh` polls, publishes, 
 notification only when something new opened.
 
 To keep polling and scoring while holding the public page, create a `.publish_hold` file in
-the repo root. While that file exists, `run_local.sh` skips `deploy_site.sh` and the optional
-MonoClaw push. Remove the file to resume publishing. The file is gitignored.
+the repo root. While that file exists, `run_local.sh` and `deploy_site.sh` both skip the
+upload. Remove the file to resume publishing. The file is gitignored. There is no MonoClaw
+call in this repo.
 
 ## Three things to check first when it goes quiet
 

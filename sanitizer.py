@@ -16,9 +16,11 @@ Allowlist
 Built from the records the public page is allowed to emit. Extra keys are
 refused. Missing keys are allowed.
 
-`name` is the company name only. `label` is a closed enum from taxonomy.
-Application fields are not here: status (as an application state), note,
-last_contact, match, why, relationship_note, rel_note, resume.
+`name` is an exact match against the known company list. `label` is a
+closed enum from taxonomy. `relationship`, `move`, and `pay_note` are
+enums. Application fields are not here: status (as an application
+state), note, last_contact, match, why, relationship_note, rel_note,
+resume.
 
 State file (`jobwatch_state.json`):
 
@@ -90,7 +92,11 @@ from taxonomy import (
     FIT_GAUGE,
     FIT_LABELS,
     INDUSTRY_LABELS,
+    KNOWN_COMPANIES,
     LEVEL_MOVE_LABELS,
+    MOVE_ENUM,
+    PAY_NOTE_ENUM,
+    RELATIONSHIP_ENUM,
     RESUMES,
     SECTOR_LABELS,
     SKILL_BANDS,
@@ -122,6 +128,9 @@ _RECORD_MAP = "record{}"
 _COMPANY = "company"
 _LABEL = "label"
 _BOARD_STATUS = "board_status"
+_RELATIONSHIP = "relationship"
+_MOVE = "move"
+_PAY_NOTE = "pay_note"
 
 KEY_TYPES = {
     # state
@@ -168,7 +177,7 @@ KEY_TYPES = {
     "locations": _STR,
     "careers": _STR,
     "comp": _RECORD,
-    "relationship": _STR,
+    "relationship": _RELATIONSHIP,
     "relationship_url": _STR,
     # compensation
     "levels_company": _COMPANY,
@@ -200,10 +209,10 @@ KEY_TYPES = {
     "board_status": _BOARD_STATUS,
     "median": _INT_OR_NONE,
     "median_conf": _STR,
-    "pay_note": _STR,
+    "pay_note": _PAY_NOTE,
     "pay_tier": _STR,
     "level_conf": _STR,
-    "move": _STR,
+    "move": _MOVE,
     "reqs": _RECORD_LIST,
     # gauge / enum label
     "bar": _STR,
@@ -302,16 +311,74 @@ ADDRESS_RE = re.compile(
 )
 
 LABELED_NAME_RE = re.compile(
-    r"\b(?:[Nn]ame|[Aa]pplicant|[Cc]andidate|[Rr]ecruiter)\s*[:\-\u2013\u2014]\s*"
-    r"([A-Z][a-z]+(?:[\s\u2013\u2014\-][A-Z][a-z]+)+)\b"
+    r"\b(?:name|applicant|candidate|recruiter)\s*[:\-\u2013\u2014]\s*"
+    r"([^\s].{0,80})",
+    re.IGNORECASE,
 )
 
 # Jane—Doe / Ada–Lovelace: em/en dash used to hide a person name.
 EMDASH_NAME_RE = re.compile(
-    r"\b[A-Z][a-z]{1,20}[\u2013\u2014][A-Z][a-z]{1,20}\b"
+    r"\b[A-Za-z][A-Za-z]{1,20}[\u2013\u2014][A-Za-z][A-Za-z]{1,20}\b"
 )
 
 MAILTO_RE = re.compile(r"mailto\s*:", re.IGNORECASE)
+
+# Application-tracker phrases that must never appear on a public title/team/loc.
+APP_PHRASE_RE = re.compile(
+    r"\b(?:applied(?:\s+\d{1,2}/\d{1,2}(?:/\d{2,4})?)?"
+    r"|application\s+stage"
+    r"|onsite\s+\d{1,2}/\d{1,2}(?:/\d{2,4})?)\b",
+    re.IGNORECASE,
+)
+
+RESUME_FILE_RE = re.compile(
+    r"(?i)(?:"
+    r"\b[a-z][a-z0-9]*[_-][a-z][a-z0-9]*[_-]resume(?:[_-]v?\d+)?"
+    r"|\b[\w.-]*(?:resume|cv)[\w.-]*\.(?:txt|pdf|docx|doc)"
+    r")"
+)
+
+SPLIT_EMAIL_RE = re.compile(
+    r"""['"]\s*\+\s*['"]\s*@\s*['"]\s*\+\s*['"]"""
+)
+
+AT_DOT_RE = re.compile(
+    r"(?i)\b[a-z0-9._%+\-]+\s*(?:\[at\]|\(at\))\s*[a-z0-9.\-]+\s*(?:\[dot\]|\(dot\))\s*[a-z]{2,}\b"
+)
+
+BOARD_NAME_RE = re.compile(r"(?i)\b(?:mine|kanban)\b")
+
+COMMENT_SPLIT_RE = re.compile(
+    r"[A-Za-z0-9](?:/\*.*?\*/|<!--.*?-->)[A-Za-z0-9]",
+    re.DOTALL,
+)
+
+UNCLOSED_BLOCK_COMMENT_RE = re.compile(r"/\*(?:(?!\*/).)*$", re.DOTALL)
+
+UNCLOSED_SCRIPT_RE = re.compile(
+    r"(?is)<script\b[^>]*>(?:(?!</script>).)*$"
+)
+
+JS_BRACKET_KEY_RE = re.compile(
+    r"""\[\s*['"](notes?|email|phone|name|profile|applied|resume)['"]\s*\]""",
+    re.IGNORECASE,
+)
+
+DATASET_RE = re.compile(
+    r"""dataset(?:\.(notes?|email|phone|name|profile|applied|resume)|\[\s*['"](?:notes?|email|phone|name|profile|applied|resume)['"]\s*\])""",
+    re.IGNORECASE,
+)
+
+DATA_ATTR_RE = re.compile(
+    r"""data-([a-z0-9_-]+)\s*=\s*(['"])(.*?)\2""",
+    re.IGNORECASE | re.DOTALL,
+)
+
+SENSITIVE_ATTRS = frozenset({
+    "note", "notes", "email", "phone", "name", "profile", "applied", "resume",
+    "last_contact", "match", "why", "relationship_note", "rel_note",
+    "applications", "interview_style",
+})
 
 SECRET_RES = (
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
@@ -345,10 +412,14 @@ _HOMOGLYPHS = str.maketrans({
     "\u0441": "c", "\u0443": "y", "\u0445": "x", "\u0456": "i",
     "\u04bb": "h", "\u0501": "d", "\u0391": "A", "\u0395": "E",
     "\u039f": "O", "\u03bf": "o", "\u03b1": "a", "\u03b5": "e",
+    "\u043c": "m", "\u041c": "M", "\u043a": "k", "\u043d": "n",
+    "\u0432": "b", "\u044c": "b",
     "\uff20": "@", "\uff0e": ".", "\u2024": ".",
-    "\u00a0": " ", "\u200b": "", "\u200c": "", "\u200d": "",
-    "\ufeff": "",
+    "\u00a0": " ",
 })
+
+ORGS_PATH = os.path.join(HERE, "organizations.json")
+STATE_PATH = os.path.join(HERE, "jobwatch_state.json")
 
 
 def _is_int(value):
@@ -379,54 +450,137 @@ def _profile_literals():
     return out
 
 
+def _known_companies():
+    names = set(KNOWN_COMPANIES)
+    for path, list_key, name_key in (
+        (ORGS_PATH, "organizations", "name"),
+    ):
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise SanitizerBlocked("cannot read known companies") from exc
+        if not isinstance(data, dict):
+            continue
+        for row in data.get(list_key) or []:
+            if not isinstance(row, dict):
+                continue
+            value = row.get(name_key)
+            if isinstance(value, str) and value and "|" not in value:
+                names.add(value)
+    return names
+
+
+def _strip_format_chars(text):
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+
+
 def _strip_comments(text):
     text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    text = re.sub(r"/\*.*$", "", text, flags=re.DOTALL)
     text = re.sub(r"(?m)//.*?$", "", text)
     return text
 
 
 def _decode_entities(text):
-    # Twice: &amp;#109;ailto: and &#109;ailto: both have to land as mailto:
-    once = html_lib.unescape(text)
-    return html_lib.unescape(once)
+    prev = None
+    for _ in range(8):
+        if text == prev:
+            break
+        prev = text
+        text = html_lib.unescape(text)
+    return text
+
+
+def _decode_js_escapes(text):
+    def repl(match):
+        return chr(int(match.group(1), 16))
+    return re.sub(r"\\u([0-9a-fA-F]{4})", repl, text)
+
+
+def _collapse_js_concat(text):
+    return re.sub(r"""['"]\s*\+\s*['"]""", "", text)
 
 
 def _deny_normalize(text):
-    """Case-fold, NFKC, map homoglyphs, strip comments, decode entities."""
+    """Case-fold, NFKC, strip Cf, map homoglyphs, decode, strip comments."""
     if not text:
         return ""
-    folded = unicodedata.normalize("NFKC", text).casefold()
-    folded = folded.translate(_HOMOGLYPHS)
+    folded = unicodedata.normalize("NFKC", text)
+    folded = _strip_format_chars(folded)
+    folded = _decode_js_escapes(folded)
     folded = _decode_entities(folded)
+    folded = _collapse_js_concat(folded)
+    folded = folded.translate(_HOMOGLYPHS)
     folded = _strip_comments(folded)
-    folded = unicodedata.normalize("NFKC", folded).translate(_HOMOGLYPHS)
+    folded = unicodedata.normalize("NFKC", folded).casefold()
+    folded = _strip_format_chars(folded)
+    folded = folded.translate(_HOMOGLYPHS)
     return folded
 
 
-def _script_json_payloads(text):
-    payloads = []
-    for match in re.finditer(r"<script\b[^>]*>(.*?)</script>", text, flags=re.DOTALL | re.IGNORECASE):
+def _script_bodies(text):
+    bodies = []
+    for match in re.finditer(
+        r"<script\b[^>]*>(.*?)</script>", text, flags=re.DOTALL | re.IGNORECASE
+    ):
         body = match.group(1).strip()
-        if not body:
-            continue
-        payloads.append(body)
-        try:
-            payloads.append(json.dumps(json.loads(body), ensure_ascii=False))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            continue
-    return payloads
+        if body:
+            bodies.append(body)
+    trailing = re.search(
+        r"(?is)<script\b[^>]*>(?![\s\S]*</script>)([\s\S]*)$", text
+    )
+    if trailing and trailing.group(1).strip():
+        bodies.append(trailing.group(1).strip())
+    return bodies
+
+
+def _json_values(obj):
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            yield key
+            yield from _json_values(value)
+    elif isinstance(obj, list):
+        for item in obj:
+            yield from _json_values(item)
+    elif isinstance(obj, str):
+        yield obj
+
+
+def _script_json_blocked(body):
+    try:
+        parsed = json.loads(body)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if isinstance(parsed, dict):
+        unknown = set(parsed) - ALLOWED_KEYS
+        leaked = set(parsed) & PRIVATE_KEYS
+        extra = unknown | leaked
+        if extra:
+            return "json_key"
+        walk = [parsed]
+        while walk:
+            item = walk.pop()
+            if isinstance(item, dict):
+                extra = (set(item) - ALLOWED_KEYS) | (set(item) & PRIVATE_KEYS)
+                if extra:
+                    return "json_key"
+                walk.extend(item.values())
+            elif isinstance(item, list):
+                walk.extend(item)
+    return None
 
 
 def _data_attr_payloads(text):
-    return [
-        match.group(2)
-        for match in re.finditer(
-            r"""data-(?:notes?|email|phone|name|profile)\s*=\s*(['"])(.*?)\1""",
-            text,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-    ]
+    payloads = []
+    for match in DATA_ATTR_RE.finditer(text):
+        attr = match.group(1).replace("-", "_").lower()
+        value = match.group(3)
+        payloads.append((attr, value))
+    return payloads
 
 
 def _find_blocked_plain(text):
@@ -448,6 +602,26 @@ def _find_blocked_plain(text):
         return "name"
     if MAILTO_RE.search(text):
         return "mailto"
+    if APP_PHRASE_RE.search(text):
+        return "application"
+    if RESUME_FILE_RE.search(text):
+        return "resume_file"
+    if SPLIT_EMAIL_RE.search(text):
+        return "email"
+    if AT_DOT_RE.search(text):
+        return "email"
+    if BOARD_NAME_RE.search(text):
+        return "board_name"
+    if COMMENT_SPLIT_RE.search(text):
+        return "comment_split"
+    if UNCLOSED_BLOCK_COMMENT_RE.search(text):
+        return "unclosed_comment"
+    if UNCLOSED_SCRIPT_RE.search(text):
+        return "unclosed_script"
+    if JS_BRACKET_KEY_RE.search(text):
+        return "js_key"
+    if DATASET_RE.search(text):
+        return "dataset"
     for secret_re in SECRET_RES:
         if secret_re.search(text):
             return "secret"
@@ -471,11 +645,34 @@ def _find_blocked(text):
     hit = _find_blocked_plain(normalized)
     if hit:
         return hit
-    for payload in _script_json_payloads(text) + _data_attr_payloads(text):
-        hit = _find_blocked(payload) if payload != text else _find_blocked_plain(payload)
+    if UNCLOSED_SCRIPT_RE.search(text):
+        return "unclosed_script"
+    for body in _script_bodies(text):
+        if body == text:
+            continue
+        hit = _script_json_blocked(body)
         if hit:
             return hit
-        hit = _find_blocked_plain(_deny_normalize(payload))
+        stripped = body.strip()
+        if stripped.startswith("{") or stripped.startswith("["):
+            try:
+                parsed = json.loads(stripped)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                parsed = None
+            if parsed is not None:
+                hit = _script_json_blocked(stripped)
+                if hit:
+                    return hit
+        hit = _find_blocked(body)
+        if hit:
+            return hit
+    for attr, value in _data_attr_payloads(text):
+        if attr in SENSITIVE_ATTRS:
+            return "data_attr"
+        hit = _find_blocked(value) if value != text else _find_blocked_plain(value)
+        if hit:
+            return hit
+        hit = _find_blocked_plain(_deny_normalize(value))
         if hit:
             return hit
     return None
@@ -543,26 +740,40 @@ def _check_type(key, value, expected):
             and all(isinstance(item, dict) for item in value.values())
         )
     if expected == _COMPANY:
-        return isinstance(value, str) and value != ""
+        return (
+            isinstance(value, str)
+            and value != ""
+            and "|" not in value
+            and value in _known_companies()
+        )
     if expected == _LABEL:
         return isinstance(value, str) and value in LABEL_ENUM
     if expected == _BOARD_STATUS:
         return value in BOARD_STATUS_ENUM or value in ("ok", "failed")
+    if expected == _RELATIONSHIP:
+        return value in RELATIONSHIP_ENUM
+    if expected == _MOVE:
+        return value in MOVE_ENUM
+    if expected == _PAY_NOTE:
+        return isinstance(value, str) and value in PAY_NOTE_ENUM
     return False
 
 
 def _sanitize_value(key, value, expected):
     if not _check_type(key, value, expected):
         raise SanitizerBlocked("wrong type for {}".format(key))
-    if expected in (_STR, _COMPANY):
+    if expected == _STR:
         return _redact_text(value)
+    if expected == _COMPANY:
+        leftover = _find_blocked(value)
+        if leftover:
+            raise SanitizerBlocked("blocked company name")
+        return value
     if expected == _STR_OR_NONE:
         return None if value is None else _redact_text(value)
     if expected == _STR_LIST:
         return [_redact_text(item) for item in value]
-    if expected == _LABEL:
-        return value
-    if expected == _BOARD_STATUS:
+    if expected in (_LABEL, _BOARD_STATUS, _RELATIONSHIP, _MOVE, _PAY_NOTE):
         return value
     if expected == _RECORD:
         return _sanitize_dict(value)

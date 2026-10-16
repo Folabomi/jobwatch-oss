@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Daily local jobwatch run. Polls, publishes the page, notifies only on new reqs.
-# A .publish_hold file in this directory skips deploy_site.sh and MonoClaw.
+# A .publish_hold file in this directory skips deploy_site.sh.
 # Polling and scoring still run.
 set -euo pipefail
 
@@ -32,9 +32,11 @@ CLOSED="$(sed -n 's/^SUMMARY .*closed=\([0-9]*\).*/\1/p' jobwatch_report.md | he
 NEW="${NEW:-0}"; LIVE="${LIVE:-0}"; CLOSED="${CLOSED:-0}"
 
 # Publish the page every run so the site always reflects the latest poll,
-# unless a hold file is present.
+# unless a hold file is present. deploy_site.sh also honors .publish_hold.
+# There is no MonoClaw call: that script is not in this repo and must not
+# push unsanitized output.
 if [ -f .publish_hold ]; then
-  echo "publish hold: .publish_hold present, skipping deploy_site.sh and MonoClaw"
+  echo "publish hold: .publish_hold present, skipping deploy_site.sh"
 else
   set +e
   ./deploy_site.sh >> jobwatch_run.log 2>&1
@@ -47,15 +49,6 @@ else
       echo "sanitizer blocked public output; nothing was uploaded"
     fi
     echo "site publish failed, see jobwatch_run.log"
-  fi
-  if [ -x ./monoclaw_push.sh ]; then
-    set +e
-    ./monoclaw_push.sh >> jobwatch_run.log 2>&1
-    CLAW_RC=$?
-    set -e
-    if [ "$CLAW_RC" -ne 0 ]; then
-      echo "MonoClaw push failed, see jobwatch_run.log"
-    fi
   fi
 fi
 

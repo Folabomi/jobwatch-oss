@@ -3,11 +3,16 @@
 # Renders the current local state, uploads, invalidates.
 set -euo pipefail
 
+cd "$(dirname "$0")"
+if [ -f .publish_hold ]; then
+  echo "publish hold: .publish_hold present, skipping deploy"
+  exit 0
+fi
+
 BUCKET="${JOBWATCH_BUCKET:?set JOBWATCH_BUCKET, e.g. s3://your-bucket}"
 DISTRIBUTION="${JOBWATCH_DISTRIBUTION:?set JOBWATCH_DISTRIBUTION, e.g. E1234567890ABC}"
 REGION="${JOBWATCH_REGION:-us-west-2}"
 SLUG="${JOBWATCH_SLUG:?set JOBWATCH_SLUG, the object key the page is served at}"
-cd "$(dirname "$0")"
 
 python3 render_site.py --out site --slug "$SLUG"
 
