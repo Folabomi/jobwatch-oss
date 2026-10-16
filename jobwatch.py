@@ -593,11 +593,15 @@ def render_report(matches, previous, ok_slugs, failures, diff_mode, first_run):
     lines.append("")
     counts = last_drop_counts()
     dropped = sum(counts.values())
-    if counts:
-        lines.append(format_drop_counts(counts))
-        lines.append("")
-    lines.append("SUMMARY new={} closed={} live={} boards_ok={} boards_failed={} drops={}".format(
-        len(opened), len(closed), len(matches), len(ok_slugs), len(failures), dropped))
+    fields = format_drop_counts(counts)
+    lines.append(fields)
+    lines.append("")
+    lines.append(
+        "SUMMARY new={} closed={} live={} boards_ok={} boards_failed={} drops={} {}".format(
+            len(opened), len(closed), len(matches), len(ok_slugs), len(failures),
+            dropped, fields,
+        )
+    )
     report = "\n".join(lines)
     scan_public_text(report)
     return report

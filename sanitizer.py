@@ -142,7 +142,10 @@ def last_drop_counts():
 
 
 def format_drop_counts(counts=None):
+    """Per-field drop counts. Always includes a drops_* token, even if none."""
     counts = last_drop_counts() if counts is None else counts
+    if not counts:
+        return "drops_none=0"
     return " ".join(
         "drops_{}={}".format(field, counts[field]) for field in sorted(counts)
     )

@@ -1332,9 +1332,7 @@ def main():
                 dismissed = sanitize(handle.read()).get("dismissed", [])
 
         html, js = render(state, args.slug, orgs_data, dismissed)
-        counts = last_drop_counts()
-        if counts:
-            print(format_drop_counts(counts), file=sys.stderr)
+        print(format_drop_counts(last_drop_counts()), file=sys.stderr)
     except SanitizerBlocked as exc:
         # Fail closed: do not write HTML or JS, even leftovers from an older run.
         print("sanitizer blocked public page: {}".format(exc), file=sys.stderr)

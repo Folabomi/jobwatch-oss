@@ -590,6 +590,80 @@ class DeploySiteGated(unittest.TestCase):
         self.assertIn("sanitizer blocked", result.stderr)
         self.assertFalse(os.path.exists(marker))
 
+    def test_deploy_fails_when_run_summary_omits_drop_fields(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root)
+        shutil.copy(os.path.join(ROOT, "deploy_site.sh"), os.path.join(root, "deploy_site.sh"))
+        with open(os.path.join(root, "render_site.py"), "w", encoding="utf-8") as handle:
+            handle.write("print('wrote site/demo and demo.js')\n")
+        bindir = os.path.join(root, "bin")
+        os.makedirs(bindir)
+        marker = os.path.join(root, "aws_ran")
+        aws = os.path.join(bindir, "aws")
+        with open(aws, "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\necho aws_called >> \"$MARKER\"\nexit 0\n")
+        os.chmod(aws, os.stat(aws).st_mode | stat.S_IEXEC)
+        env = os.environ.copy()
+        env.update({
+            "PATH": bindir + os.pathsep + env.get("PATH", ""),
+            "JOBWATCH_BUCKET": "s3://test-bucket",
+            "JOBWATCH_DISTRIBUTION": "E1234567890ABC",
+            "JOBWATCH_SLUG": "demo",
+            "MARKER": marker,
+        })
+        result = subprocess.run(
+            ["bash", "./deploy_site.sh"],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("drops-by-field", result.stderr)
+        self.assertFalse(os.path.exists(marker))
+
+    def test_deploy_requires_drops_by_field_then_uploads(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root)
+        shutil.copy(os.path.join(ROOT, "deploy_site.sh"), os.path.join(root, "deploy_site.sh"))
+        with open(os.path.join(root, "render_site.py"), "w", encoding="utf-8") as handle:
+            handle.write("import sys\nprint('drops_none=0', file=sys.stderr)\nprint('wrote site/demo')\n")
+        bindir = os.path.join(root, "bin")
+        os.makedirs(bindir)
+        marker = os.path.join(root, "aws_ran")
+        aws = os.path.join(bindir, "aws")
+        with open(aws, "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\necho aws_called >> \"$MARKER\"\nexit 0\n")
+        os.chmod(aws, os.stat(aws).st_mode | stat.S_IEXEC)
+        env = os.environ.copy()
+        env.update({
+            "PATH": bindir + os.pathsep + env.get("PATH", ""),
+            "JOBWATCH_BUCKET": "s3://test-bucket",
+            "JOBWATCH_DISTRIBUTION": "E1234567890ABC",
+            "JOBWATCH_SLUG": "demo",
+            "MARKER": marker,
+        })
+        result = subprocess.run(
+            ["bash", "./deploy_site.sh"],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("drops_none=0", result.stdout)
+        self.assertTrue(os.path.exists(marker))
+
+    def test_report_summary_always_includes_drops_by_field(self):
+        import jobwatch
+        reset_drops()
+        matches = {"greenhouse:acme:100": job_with()}
+        report = jobwatch.render_report(matches, {}, ["acme"], [], False, False)
+        self.assertIn("drops_none=0", report)
+        summary = [line for line in report.splitlines() if line.startswith("SUMMARY ")][0]
+        self.assertIn("drops_none=0", summary)
+        self.assertIn("drops=0", summary)
+
 
 class PublishHold(unittest.TestCase):
     def test_hold_skips_deploy_and_monoclaw_but_still_polls(self):
@@ -2141,7 +2215,7 @@ TEST_CASES = (
     DenyPassLiveBoardAndDrops, DenyPassQaRereview, DenyPassCisoBar,
 )
 
-EXPECTED_SANITIZER_TESTS = 331
+EXPECTED_SANITIZER_TESTS = 334
 
 
 def _discovered_count():

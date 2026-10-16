@@ -38,6 +38,10 @@ NEW="${NEW:-0}"; LIVE="${LIVE:-0}"; CLOSED="${CLOSED:-0}"
 if [ -f .publish_hold ]; then
   echo "held"
 else
+  if ! grep -Eq 'drops_[a-z][a-z0-9_]*=' jobwatch_report.md; then
+    echo "run summary missing drops-by-field; refusing deploy" >&2
+    exit 2
+  fi
   set +e
   ./deploy_site.sh >> jobwatch_run.log 2>&1
   DEPLOY_RC=$?
@@ -60,4 +64,5 @@ if [ "$NEW" -gt 0 ]; then
   osascript -e "display notification \"$NEW new, $CLOSED closed, $LIVE live\" with title \"jobwatch: $NEW new req(s)\" sound name \"Glass\"" 2>/dev/null || true
 fi
 
-echo "SUMMARY new=$NEW closed=$CLOSED live=$LIVE"
+SUMMARY_LINE="$(grep '^SUMMARY ' jobwatch_report.md | head -1 || true)"
+echo "${SUMMARY_LINE:-SUMMARY new=$NEW closed=$CLOSED live=$LIVE}"
