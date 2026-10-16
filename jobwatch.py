@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 
 import requests
 
+from sanitizer import SanitizerBlocked, sanitize, scan_public_text
+
 # --------------------------------------------------------------------------
 # Filters. Tune these two lists; everything else keys off them.
 # Matching is case insensitive and anchored on word boundaries, with common
@@ -512,6 +514,7 @@ def save_state(previous, matches, ok_slugs, stats=None):
 
 
 def render_job(match):
+    match = sanitize(match)
     flag = "  [SDE SIGNAL]" if "sde-signal" in match.get("flags", []) else ""
     return "\n".join(
         [
@@ -563,7 +566,9 @@ def render_report(matches, previous, ok_slugs, failures, diff_mode, first_run):
     lines.append("")
     lines.append("SUMMARY new={} closed={} live={} boards_ok={} boards_failed={}".format(
         len(opened), len(closed), len(matches), len(ok_slugs), len(failures)))
-    return "\n".join(lines)
+    report = "\n".join(lines)
+    scan_public_text(report)
+    return report
 
 
 def run_probe(boards):
@@ -615,7 +620,13 @@ def main():
 
     previous = load_state()
     first_run = not previous.get("jobs")
-    report = render_report(matches, previous, ok_slugs, failures, args.diff, first_run)
+    try:
+        report = render_report(matches, previous, ok_slugs, failures, args.diff, first_run)
+    except SanitizerBlocked as exc:
+        # Local state is not a public target. Keep the poll; refuse the report.
+        print("sanitizer blocked public report: {}".format(exc), file=sys.stderr)
+        save_state(previous, matches, ok_slugs, stats)
+        return 1
     print(report)
     save_state(previous, matches, ok_slugs, stats)
     return 0

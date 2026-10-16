@@ -11,6 +11,7 @@ import html
 import json
 import os
 import re
+import sys
 from datetime import datetime
 
 SITE_CITY = "your city"
@@ -23,6 +24,7 @@ APPS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "applicatio
 ORGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "organizations.json")
 HIDDEN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dismissed.json")
 
+from sanitizer import SanitizerBlocked, sanitize, sanitize_records, scan_public_text  # noqa: E402
 from taxonomy import (  # noqa: E402 - constants live in one place now
     ACTION_STATUSES,
     ARCH_LABELS,
@@ -898,8 +900,15 @@ def build_orgs(orgs_data, rows, board_stats=None):
 
 
 def render(state, slug, apps=(), orgs_data=(), dismissed=()):
+    # Every record that can reach the published page goes through the
+    # sanitizer first. sanitize raises SanitizerBlocked and returns nothing
+    # if a record is unsafe; this function then writes no files.
+    state = sanitize(state)
+    apps = sanitize_records(list(apps))
+    orgs_data = sanitize_records(list(orgs_data))
+    dismissed = sanitize({"dismissed": list(dismissed)})["dismissed"]
     rows = build_rows(state, apps)
-    orgs = build_orgs(orgs_data, rows, state.get("boards") or {})
+    orgs = sanitize_records(build_orgs(orgs_data, rows, state.get("boards") or {}))
     skills_svg, skills_n = skills_chart(rows)
     boards = state.get("boards") or {}
     ok = [b for b in boards.values() if b.get("status") == "ok"]
@@ -1340,6 +1349,8 @@ def render(state, slug, apps=(), orgs_data=(), dismissed=()):
         "rejected": rejected_count,
         "banded": banded_count,
     }
+    scan_public_text(html)
+    scan_public_text(js)
     return html, js
 
 
@@ -1352,25 +1363,31 @@ def main():
     if not SLUG_RE.match(args.slug):
         parser.error("--slug must match [A-Za-z0-9_-]{1,64}; it becomes a file name and an object key")
 
-    with open(STATE_PATH, "r", encoding="utf-8") as handle:
-        state = json.load(handle)
+    try:
+        with open(STATE_PATH, "r", encoding="utf-8") as handle:
+            state = sanitize(handle.read())
 
-    apps = []
-    if os.path.exists(APPS_PATH):
-        with open(APPS_PATH, "r", encoding="utf-8") as handle:
-            apps = json.load(handle).get("applications", [])
+        apps = []
+        if os.path.exists(APPS_PATH):
+            with open(APPS_PATH, "r", encoding="utf-8") as handle:
+                apps = sanitize(handle.read()).get("applications", [])
 
-    orgs_data = []
-    if os.path.exists(ORGS_PATH):
-        with open(ORGS_PATH, "r", encoding="utf-8") as handle:
-            orgs_data = json.load(handle).get("organizations", [])
+        orgs_data = []
+        if os.path.exists(ORGS_PATH):
+            with open(ORGS_PATH, "r", encoding="utf-8") as handle:
+                orgs_data = sanitize(handle.read()).get("organizations", [])
 
-    dismissed = []
-    if os.path.exists(HIDDEN_PATH):
-        with open(HIDDEN_PATH, "r", encoding="utf-8") as handle:
-            dismissed = json.load(handle).get("dismissed", [])
+        dismissed = []
+        if os.path.exists(HIDDEN_PATH):
+            with open(HIDDEN_PATH, "r", encoding="utf-8") as handle:
+                dismissed = sanitize(handle.read()).get("dismissed", [])
 
-    html, js = render(state, args.slug, apps, orgs_data, dismissed)
+        html, js = render(state, args.slug, apps, orgs_data, dismissed)
+    except SanitizerBlocked as exc:
+        # Fail closed: do not write HTML or JS, even leftovers from an older run.
+        print("sanitizer blocked public page: {}".format(exc), file=sys.stderr)
+        raise SystemExit(2)
+
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, args.slug), "w", encoding="utf-8") as handle:
         handle.write(html)
