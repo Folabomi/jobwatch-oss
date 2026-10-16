@@ -792,8 +792,16 @@ class DenyPassDataAndDataset(unittest.TestCase):
         with self.assertRaises(SanitizerBlocked):
             scan_public_text("el.dataset.notes = 'ping'")
 
-    def test_dataset_tier_passes(self):
-        scan_public_text("el.dataset.tier = 'rare'")
+    def test_dataset_tier_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("el.dataset.tier = 'rare'")
+
+    def test_dataset_foo_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("el.dataset.foo")
+
+    def test_el_plain_tier_passes(self):
+        scan_public_text("el.tier = 'rare'")
 
     def test_obj_notes_access_is_blocked(self):
         with self.assertRaises(SanitizerBlocked):
@@ -866,9 +874,13 @@ class DenyPassLeaksAndUrls(unittest.TestCase):
         with self.assertRaises(SanitizerBlocked):
             sanitize(job_with(title="SWE - interviewing w/ Jane"))
 
-    def test_title_onsite_is_blocked(self):
-        with self.assertRaises(SanitizerBlocked):
-            sanitize(job_with(title="SWE - onsite"))
+    def test_title_dash_onsite_passes(self):
+        cleaned = sanitize(job_with(title="Software Engineer - Onsite"))
+        self.assertEqual(cleaned["title"], "Software Engineer - Onsite")
+
+    def test_title_paren_onsite_passes(self):
+        cleaned = sanitize(job_with(title="Software Engineer (Onsite)"))
+        self.assertEqual(cleaned["title"], "Software Engineer (Onsite)")
 
     def test_title_offer_is_blocked(self):
         with self.assertRaises(SanitizerBlocked):
@@ -1009,6 +1021,111 @@ class DenyPassLeaksAndUrls(unittest.TestCase):
         with self.assertRaises(SanitizerBlocked):
             sanitize(job_with(url="https://m\u00fcnich.example.com/jobs/1"))
 
+    def test_swe_pipe_applied_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="SWE | applied"))
+
+    def test_swe_bracket_applied_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="SWE [applied]"))
+
+    def test_payments_interview_fri_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="Payments [interview Fri]"))
+
+    def test_swe_emoji_onsite_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="SWE \U0001F4C5 onsite"))
+
+    def test_onsite_tuesday_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="onsite Tue"))
+
+    def test_onsite_with_jane_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="onsite w/ Jane"))
+
+    def test_final_round_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="SWE - final round"))
+
+    def test_take_home_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="SWE | take-home"))
+
+    def test_waitlisted_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("waitlisted")
+
+    def test_withdrew_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("withdrew")
+
+    def test_withdrawn_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="SWE withdrawn"))
+
+    def test_finals_club_title_passes(self):
+        cleaned = sanitize(job_with(title="Reliability Engineer"))
+        self.assertEqual(cleaned["title"], "Reliability Engineer")
+
+    def test_hex_ascii_in_text_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("6a616e6540782e636f6d")
+
+    def test_hex_ascii_in_url_path_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(url="https://example.com/jobs/6a616e6540782e636f6d"))
+
+    def test_hex_ascii_inside_uuid_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://example.com/jobs/6a616e65-4078-2e63-6f6d-000000000001"
+            ))
+
+    def test_workday_job_url_passes(self):
+        url = (
+            "https://crowdstrike.wd5.myworkdayjobs.com/en-US/"
+            "crowdstrikecareers/job/DDoS-Mitigation_R12345"
+        )
+        cleaned = sanitize(job_with(url=url))
+        self.assertEqual(cleaned["url"], url)
+
+    def test_unpadded_b64_path_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(url="https://example.com/r/amFuZUB4LmNvbQ"))
+
+    def test_unpadded_b64_token_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("leak amFuZUB4LmNvbQ leftover")
+
+    def test_real_word_twelve_plus_passes(self):
+        cleaned = sanitize(job_with(title="Infrastructure Engineer"))
+        self.assertEqual(cleaned["title"], "Infrastructure Engineer")
+
+    def test_camelcase_identifier_passes(self):
+        scan_public_text("document.querySelectorAll")
+
+    def test_kanban_alone_in_team_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(dict(CLEAN_ORG, team="Kanban"))
+
+    def test_stage_word_in_team_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(dict(CLEAN_ORG, team="applied"))
+
+    def test_stage_word_in_locations_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(dict(CLEAN_ORG, locations="interview"))
+
+    def test_careers_path_applied_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(dict(CLEAN_ORG, careers="https://example.com/jobs/applied"))
+
+    def test_careers_clean_path_passes(self):
+        cleaned = sanitize(dict(CLEAN_ORG, careers="https://example.com/acme/careers"))
+        self.assertEqual(cleaned["careers"], "https://example.com/acme/careers")
+
     def test_hex_at_escape_is_blocked(self):
         with self.assertRaises(SanitizerBlocked):
             scan_public_text("ada\\x40example.com")
@@ -1094,7 +1211,7 @@ TEST_CASES = (
     DenyPassLeaksAndUrls,
 )
 
-EXPECTED_SANITIZER_TESTS = 180
+EXPECTED_SANITIZER_TESTS = 208
 
 
 def _discovered_count():

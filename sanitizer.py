@@ -326,38 +326,52 @@ EMDASH_NAME_RE = re.compile(
 
 MAILTO_RE = re.compile(r"mailto\s*:", re.IGNORECASE)
 
-# Stage words only in a status context: next to a date, a weekday, a person,
-# 'w/', or a status colon or dash. Never as a title prefix (Offer Management,
-# Onsite IT Support, Interviewing Platform, Screening Infrastructure,
-# Applied ML / Applied Researcher). Onsite in a location is allowed.
-_STAGE = r"(?:applied|on-?site|interviewing|offer|screen(?:ing)?)"
-_DATE = r"\d{1,2}/\d{1,2}(?:/\d{2,4})?"
-_DAY = (
-    r"(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|"
-    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?"
-)
-_GIVEN = (
-    r"(?:ada|alex|anna|daniel|david|emily|james|jane|john|"
-    r"laura|mary|michael|rachel|robert|sarah)"
-)
-APP_PHRASE_RE = re.compile(
+# Stage / outcome words. A title prefix is not a stage (Offer Management,
+# Interviewing Platform, Applied Scientist). Onsite / On-site is a work-mode
+# label when it stands alone after a dash or parens, or leads a location
+# ("Software Engineer - Onsite", "Software Engineer (Onsite)",
+# "Onsite - Austin, TX"). It is a stage when it comes with a date, weekday,
+# person, 'w/', another stage word, or a non-work-mode separator
+# (pipe, brackets, middot, emoji): "onsite Tue", "onsite w/ Jane",
+# "SWE 📅 onsite".
+_STATUS_WORDS = frozenset({
+    "applied", "interview", "interviewing", "offer", "screen", "screening",
+    "rejected", "ghosted", "declined", "waitlisted", "withdrew", "withdrawn",
+})
+_ONSITE_WORDS = frozenset({"onsite", "on-site"})
+_STAGE_FIELD_WORDS = _STATUS_WORDS | frozenset({
+    "take-home", "takehome", "final",
+})
+_DAY_WORDS = frozenset({
+    "mon", "tue", "tues", "wed", "thu", "thur", "thurs", "fri", "sat", "sun",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+})
+_GIVEN_NAMES = frozenset({
+    "ada", "alex", "anna", "daniel", "david", "emily", "james", "jane",
+    "john", "laura", "mary", "michael", "rachel", "robert", "sarah",
+})
+_WORKMODE_SEPS = frozenset({"-", "\u2013", "\u2014", "(", ")"})
+_STATUS_SEPS = frozenset({"(", ")", "[", "]", "|", "·", "•", "/"})
+_DATE_RE = re.compile(r"^\d{1,2}/\d{1,2}(?:/\d{2,4})?$")
+_PHRASE_ALWAYS_RE = re.compile(
     r"(?i)(?:"
     r"\bapplication\s+stage\b"
-    r"|\b" + _STAGE + r"\s+" + _DATE + r"\b"
-    r"|\b" + _STAGE + r"\s+" + _DAY + r"\b"
-    r"|\b" + _STAGE + r"\s+w/"
-    r"|\b" + _STAGE + r"\s+with\s+" + _GIVEN + r"\b"
-    r"|\b" + _STAGE + r"\s*:"
-    r"|:\s*" + _STAGE + r"\b"
-    r"|(?:^|(?<=[\s(\[\"']))[A-Za-z][A-Za-z0-9+#.]*"
-    r"(?:\s+[A-Za-z][A-Za-z0-9+#.]*)*\s+[\-\u2013\u2014]\s*" + _STAGE + r"\b"
-    r"|^" + _STAGE + r"$"
-    r"|\b(?:rejected|ghosted|declined)\b"
-    r"|\bphone\s+screen\b(?:\s+(?:" + _DAY + r"|" + _DATE + r"|done|with|scheduled|w/))"
-    r"|\(\s*phone\s+screen\b"
-    r"|[\-\u2013\u2014:]\s*phone\s+screen\b"
+    r"|\bfinal\s+round\b"
+    r"|\btake-?home\b"
+    r"|\b(?:applied|interview|interviewing|offer|screen(?:ing)?)\s*:"
+    r"|\b(?:rejected|ghosted|declined|waitlisted|withdrew|withdrawn)\b"
     r"|\b(?:ref'd|referred)\s+by\b"
+    r"|\bphone\s+screen\b(?:\s+(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+    r"\d{1,2}/\d{1,2}(?:/\d{2,4})?|done|with|scheduled|w/))"
+    r"|\(\s*phone\s+screen\b"
     r")"
+)
+_WALK_RE = re.compile(
+    r"(?i)(final\s+round|take-?home|phone\s+screen|on-site|w/|"
+    r"[A-Za-z][A-Za-z']*|\d{1,2}/\d{1,2}(?:/\d{2,4})?|"
+    r"[\U0001F300-\U0001FAFF\u2300-\u27BF\u2600-\u26FF]|"
+    r"[()\[\]|·•:\-\u2013\u2014])"
 )
 
 # Mine/Kanban only in a board context, not "Mine Safety" / "Kanban Tools Engineer".
@@ -392,12 +406,6 @@ _ROLE_OR_ORG_WORDS = frozenset({
     "traffic", "waf",
 })
 
-# Given names that turn a following word into a person (Jane Roe, Ada Lovelace).
-_GIVEN_NAMES = frozenset({
-    "ada", "alex", "anna", "daniel", "david", "emily", "james", "jane",
-    "john", "laura", "mary", "michael", "rachel", "robert", "sarah",
-})
-
 BLOCKED_SCHEMES_RE = re.compile(
     r"(?i)(?:^|[\s\"'=])(?:javascript|data|vbscript|file|blob|ftp|mailto):"
 )
@@ -409,14 +417,38 @@ PUNYCODE_HOST_RE = re.compile(r"(?i)(?:https://|//)[^/\s\"']*xn--")
 NON_ASCII_HOST_RE = re.compile(r"https://[^/\s\"']*[^\x00-\x7F]")
 
 B64_TOKEN_RE = re.compile(
-    r"(?<![A-Za-z0-9+])([A-Za-z0-9+]{14,}={0,2})(?![A-Za-z0-9+=])"
+    r"(?<![A-Za-z0-9_-])([A-Za-z0-9_-]{12,}={0,2})(?![A-Za-z0-9_=-])"
 )
 
 UUID_RE = re.compile(
     r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
 
+UUID_SHAPE_RE = re.compile(
+    r"(?i)[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+)
+
 HEX_ID_RE = re.compile(r"(?i)^[0-9a-f]+$")
+
+HEX_RUN_RE = re.compile(r"(?i)[0-9a-f]{16,}")
+
+CAMEL_RE = re.compile(
+    r"^(?:"
+    r"[a-z]+(?:[A-Z][a-z]+)+[A-Z]?"
+    r"|[a-z]+(?:[A-Z]{2,}(?=[A-Z][a-z]|$)|[A-Z][a-z]+)+"
+    r"|[A-Z][a-z]+(?:[A-Z][a-z]+)+"
+    r")$"
+)
+
+SLUG_RE = re.compile(r"^[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)+$")
+
+ATS_HOST_SUFFIXES = (
+    ".greenhouse.io",
+    ".ashbyhq.com",
+    ".lever.co",
+    ".myworkdayjobs.com",
+    ".workday.com",
+)
 
 URL_KEYS = frozenset({"url", "careers", "relationship_url", "rel_url"})
 
@@ -452,7 +484,7 @@ JS_BRACKET_KEY_RE = re.compile(
 )
 
 DATASET_RE = re.compile(
-    r"""dataset(?:\.(notes?|email|phone|name|profile|applied|resume)|\[\s*['"](?:notes?|email|phone|name|profile|applied|resume)['"]\s*\])""",
+    r"""dataset(?:\.[A-Za-z_]\w*|\[\s*['"][^'"]+['"]\s*\])""",
     re.IGNORECASE,
 )
 
@@ -699,6 +731,100 @@ def _path_has_person(path):
     return False
 
 
+def _is_emoji(ch):
+    if not ch or len(ch) != 1:
+        return False
+    code = ord(ch)
+    return (
+        0x1F300 <= code <= 0x1FAFF
+        or 0x2300 <= code <= 0x27BF
+        or 0x2600 <= code <= 0x26FF
+    )
+
+
+def _is_status_follower(token):
+    folded = (token or "").casefold()
+    if not folded:
+        return False
+    if _DATE_RE.match(folded) or folded in _DAY_WORDS:
+        return True
+    if folded in {"w/", "with"} or folded in _GIVEN_NAMES:
+        return True
+    if folded in _STATUS_WORDS or folded in _ONSITE_WORDS:
+        return True
+    if folded in {"final", "take-home", "takehome"}:
+        return True
+    return False
+
+
+def _application_status_hit(text):
+    """True when a stage/outcome word appears in a status context."""
+    if not text:
+        return False
+    if _PHRASE_ALWAYS_RE.search(text):
+        return True
+    tokens = _WALK_RE.findall(text)
+    for index, raw in enumerate(tokens):
+        folded = raw.casefold()
+        nxt = tokens[index + 1].casefold() if index + 1 < len(tokens) else ""
+        prev = tokens[index - 1] if index else ""
+        prev_fold = prev.casefold()
+        is_onsite = folded in _ONSITE_WORDS
+        is_status = folded in _STATUS_WORDS or folded in {
+            "final round", "take-home", "take home", "phone screen",
+        }
+        if not is_onsite and not is_status:
+            continue
+        if _is_status_follower(nxt) or nxt == "w/":
+            return True
+        if prev_fold == "w/":
+            return True
+        if nxt == ":":
+            return True
+        if prev and _is_emoji(prev):
+            return True
+        if prev in _STATUS_SEPS and not (is_onsite and prev in _WORKMODE_SEPS):
+            return True
+        if is_status and prev in _WORKMODE_SEPS:
+            return True
+        if is_status and folded == raw.casefold() and index == 0 and len(tokens) == 1:
+            return True
+    return False
+
+
+def _path_has_stage(path):
+    if _application_status_hit(path or ""):
+        return True
+    for segment in (path or "").split("/"):
+        folded = segment.casefold().strip()
+        if folded in _STATUS_WORDS or folded in {
+            "final-round", "take-home", "takehome", "waitlisted",
+        }:
+            return True
+    return False
+
+
+def _field_tokens(text):
+    return [tok.casefold() for tok in re.findall(r"[A-Za-z][A-Za-z0-9'./-]*", text or "")]
+
+
+def _field_vocab_blocked(key, value):
+    """Team/locations tokens must come from a vocab with no stage words."""
+    if not isinstance(value, str) or not value:
+        return False
+    tokens = _field_tokens(value)
+    if key == "team" and tokens == ["kanban"]:
+        return True
+    if key == "team" and tokens == ["mine"]:
+        return True
+    for token in tokens:
+        if key in {"location", "locations"} and token in _ONSITE_WORDS:
+            continue
+        if token in _STAGE_FIELD_WORDS or token == "round":
+            return True
+    return False
+
+
 def _is_exempt_job_id(token):
     raw = (token or "").rstrip("=")
     if not raw:
@@ -712,21 +838,119 @@ def _is_exempt_job_id(token):
     return False
 
 
-def _looks_like_b64(token):
-    if not token or len(token) < 16:
-        return False
-    if _is_exempt_job_id(token):
-        return False
-    if token.endswith("=") or "+" in token:
+def _ats_hosts():
+    hosts = {
+        "boards.greenhouse.io",
+        "job-boards.greenhouse.io",
+        "jobs.ashbyhq.com",
+        "jobs.lever.co",
+    }
+    import jobwatch
+    for row in jobwatch.BOARDS:
+        host = (row.get("host") or "").lower()
+        domain = (row.get("domain") or "").lower()
+        if host:
+            hosts.add(host)
+        if domain:
+            hosts.add(domain)
+    return hosts
+
+
+def _is_ats_host(host):
+    host = (host or "").lower()
+    if host in _ats_hosts():
         return True
-    if len(token) % 4 == 0 and _b64_email(token):
+    return any(host.endswith(suffix) for suffix in ATS_HOST_SUFFIXES)
+
+
+def _hex_decodes_printable(raw):
+    if len(raw) < 16 or len(raw) % 2:
+        return False
+    try:
+        decoded = bytes.fromhex(raw)
+    except ValueError:
+        return False
+    return bool(decoded) and all(32 <= byte <= 126 for byte in decoded)
+
+
+def _printable_hex_leak(text):
+    if not text:
+        return False
+    compact = UUID_SHAPE_RE.sub(lambda match: match.group(0).replace("-", ""), text)
+    for source in (text, compact):
+        for match in HEX_RUN_RE.finditer(source):
+            raw = match.group(0)
+            if len(raw) % 2:
+                raw = raw[:-1]
+            for start in range(0, len(raw) - 15, 2):
+                for end in range(start + 16, len(raw) + 1, 2):
+                    if _hex_decodes_printable(raw[start:end]):
+                        return True
+    return False
+
+
+def _b64_payload(token):
+    raw = (token or "").strip()
+    if len(raw) < 8:
+        return ""
+    try:
+        alphabet = raw + "=" * (-len(raw) % 4)
+        decoded = base64.b64decode(alphabet, altchars=b"-_", validate=False)
+        return decoded.decode("utf-8", errors="strict")
+    except (ValueError, UnicodeDecodeError):
+        return ""
+
+
+def _looks_like_b64(token, allow_id=False):
+    if not token or len(token) < 12:
+        return False
+    if allow_id and _is_exempt_job_id(token):
+        return False
+    body = token.rstrip("=")
+    if CAMEL_RE.match(body) or SLUG_RE.match(body):
+        return False
+    if re.fullmatch(r"[A-Za-z]+(?:-[A-Za-z]+)+", body):
+        return False
+    if token.isalpha() and (token.islower() or token.isupper() or token.istitle()):
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9_=-]+", token):
+        return False
+    payload = _b64_payload(token)
+    interesting = bool(
+        payload
+        and (
+            EMAIL_RE.search(payload)
+            or ("@" in payload and payload.isprintable())
+            or (
+                len(payload) >= 6
+                and payload.isprintable()
+                and not payload.isidentifier()
+            )
+        )
+    )
+    if interesting:
+        return True
+    pad = len(token) - len(body)
+    if pad:
+        rem = len(body) % 4
+        valid_pad = (rem == 2 and pad == 2) or (rem == 3 and pad == 1)
+        if valid_pad and "-" not in body:
+            return True
+        return False
+    if "+" in token:
         return True
     return False
 
 
-def _b64_in_text(text):
-    for match in B64_TOKEN_RE.finditer(text or ""):
-        if _looks_like_b64(match.group(1)):
+def _b64_in_text(text, allow_id=False):
+    if not text:
+        return False
+    for token in re.split(r"[/\s?#&=]+", text):
+        cleaned = token.strip(".,;:()[]{}\"'")
+        if _looks_like_b64(cleaned, allow_id=allow_id):
+            return True
+    for match in B64_TOKEN_RE.finditer(text):
+        if _looks_like_b64(match.group(1), allow_id=allow_id):
             return True
     return False
 
@@ -808,7 +1032,11 @@ def _sanitize_url(value):
         raise SanitizerBlocked("url query is blocked")
     if _path_has_person(parsed.path):
         raise SanitizerBlocked("url path has a person name")
-    if _b64_in_text(parsed.path):
+    if _path_has_stage(parsed.path):
+        raise SanitizerBlocked("url path has a stage word")
+    if _printable_hex_leak(parsed.path):
+        raise SanitizerBlocked("url path has encoded text")
+    if _b64_in_text(parsed.path, allow_id=_is_ats_host(host)):
         raise SanitizerBlocked("url path has a base64 token")
     cleaned = urlunparse(("https", parsed.netloc, parsed.path, "", "", ""))
     leftover = _find_blocked(cleaned)
@@ -836,8 +1064,10 @@ def _find_blocked_plain(text):
         return "name"
     if MAILTO_RE.search(text):
         return "mailto"
-    if APP_PHRASE_RE.search(text):
+    if _application_status_hit(text):
         return "application"
+    if _printable_hex_leak(text):
+        return "hex"
     if RESUME_FILE_RE.search(text):
         return "resume_file"
     if SPLIT_EMAIL_RE.search(text):
@@ -1006,6 +1236,8 @@ def _sanitize_value(key, value, expected):
     if not _check_type(key, value, expected):
         raise SanitizerBlocked("wrong type for {}".format(key))
     if expected == _STR:
+        if key in {"team", "locations", "location"} and _field_vocab_blocked(key, value):
+            raise SanitizerBlocked("blocked {} token".format(key))
         return _redact_text(value)
     if expected == _COMPANY:
         leftover = _find_blocked(value)
