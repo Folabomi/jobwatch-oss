@@ -35,10 +35,11 @@ NEW="${NEW:-0}"; LIVE="${LIVE:-0}"; CLOSED="${CLOSED:-0}"
 # unless a hold file is present. deploy_site.sh also honors .publish_hold.
 # There is no MonoClaw call: that script is not in this repo and must not
 # push unsanitized output.
+DEPLOY_RC=0
 if [ -f .publish_hold ]; then
   echo "held"
 else
-  if ! grep -Eq 'drops_[a-z][a-z0-9_]*=' jobwatch_report.md; then
+  if ! grep -Eq '^SUMMARY .* drops_[a-z][a-z0-9_]*=[0-9]+( |$)' jobwatch_report.md; then
     echo "run summary missing drops-by-field; refusing deploy" >&2
     exit 2
   fi
@@ -66,3 +67,6 @@ fi
 
 SUMMARY_LINE="$(grep '^SUMMARY ' jobwatch_report.md | head -1 || true)"
 echo "${SUMMARY_LINE:-SUMMARY new=$NEW closed=$CLOSED live=$LIVE}"
+if [ "$DEPLOY_RC" -ne 0 ]; then
+  exit "$DEPLOY_RC"
+fi

@@ -664,6 +664,89 @@ class DeploySiteGated(unittest.TestCase):
         self.assertIn("drops_none=0", summary)
         self.assertIn("drops=0", summary)
 
+    def test_title_drops_token_is_refused_by_both_gates(self):
+        decoy = "- Cloudflare | SWE drops_none=0"
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root)
+        shutil.copy(os.path.join(ROOT, "run_local.sh"), os.path.join(root, "run_local.sh"))
+        shutil.copy(os.path.join(ROOT, "deploy_site.sh"), os.path.join(root, "deploy_site.sh"))
+        with open(os.path.join(root, "jobwatch.py"), "w", encoding="utf-8") as handle:
+            handle.write(
+                "import sys\n"
+                "sys.stderr.write('polling 1 board(s)...\\n')\n"
+                "sys.stdout.write('# jobwatch\\n\\n"
+                + decoy
+                + "\\n\\nSUMMARY new=0 closed=0 live=1 boards_ok=1 boards_failed=0\\n')\n"
+            )
+        deploy_ran = os.path.join(root, "deploy_ran")
+        with open(os.path.join(root, "deploy_site.sh"), "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\ntouch deploy_ran\nexit 0\n")
+        os.chmod(os.path.join(root, "deploy_site.sh"), 0o755)
+        local = subprocess.run(
+            ["bash", "./run_local.sh"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(local.returncode, 0, local.stdout + local.stderr)
+        self.assertIn("drops-by-field", local.stderr)
+        self.assertFalse(os.path.exists(deploy_ran))
+
+        shutil.copy(os.path.join(ROOT, "deploy_site.sh"), os.path.join(root, "deploy_site.sh"))
+        with open(os.path.join(root, "render_site.py"), "w", encoding="utf-8") as handle:
+            handle.write("print({!r})\nprint('wrote site/demo')\n".format(decoy))
+        bindir = os.path.join(root, "bin")
+        os.makedirs(bindir)
+        marker = os.path.join(root, "aws_ran")
+        aws = os.path.join(bindir, "aws")
+        with open(aws, "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\necho aws_called >> \"$MARKER\"\nexit 0\n")
+        os.chmod(aws, os.stat(aws).st_mode | stat.S_IEXEC)
+        env = os.environ.copy()
+        env.update({
+            "PATH": bindir + os.pathsep + env.get("PATH", ""),
+            "JOBWATCH_BUCKET": "s3://test-bucket",
+            "JOBWATCH_DISTRIBUTION": "E1234567890ABC",
+            "JOBWATCH_SLUG": "demo",
+            "MARKER": marker,
+        })
+        deploy = subprocess.run(
+            ["bash", "./deploy_site.sh"],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(deploy.returncode, 0, deploy.stdout + deploy.stderr)
+        self.assertIn("drops-by-field", deploy.stderr)
+        self.assertFalse(os.path.exists(marker))
+
+    def test_run_local_exits_nonzero_when_deploy_fails(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root)
+        shutil.copy(os.path.join(ROOT, "run_local.sh"), os.path.join(root, "run_local.sh"))
+        with open(os.path.join(root, "jobwatch.py"), "w", encoding="utf-8") as handle:
+            handle.write(
+                "import sys\n"
+                "sys.stderr.write('polling 1 board(s)...\\n')\n"
+                "sys.stdout.write("
+                "'# jobwatch\\n\\n"
+                "SUMMARY new=0 closed=0 live=3 boards_ok=1 boards_failed=0 "
+                "drops=0 drops_none=0\\n')\n"
+            )
+        with open(os.path.join(root, "deploy_site.sh"), "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\necho deploy boom >&2\nexit 1\n")
+        os.chmod(os.path.join(root, "deploy_site.sh"), 0o755)
+        result = subprocess.run(
+            ["bash", "./run_local.sh"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("site publish failed", result.stdout)
+
 
 class PublishHold(unittest.TestCase):
     def test_hold_skips_deploy_and_monoclaw_but_still_polls(self):
@@ -2215,7 +2298,7 @@ TEST_CASES = (
     DenyPassLiveBoardAndDrops, DenyPassQaRereview, DenyPassCisoBar,
 )
 
-EXPECTED_SANITIZER_TESTS = 334
+EXPECTED_SANITIZER_TESTS = 336
 
 
 def _discovered_count():

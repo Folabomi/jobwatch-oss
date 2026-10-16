@@ -23,7 +23,7 @@ if [ "$RENDER_RC" -ne 0 ]; then
   printf '%s\n' "$RENDER_OUT" >&2
   exit "$RENDER_RC"
 fi
-if ! printf '%s\n' "$RENDER_OUT" | grep -Eq 'drops_[a-z][a-z0-9_]*=' ; then
+if ! printf '%s\n' "$RENDER_OUT" | grep -Eq '^drops_[a-z_]+=[0-9]+( drops_[a-z_]+=[0-9]+)*$'; then
   echo "run summary missing drops-by-field; refusing deploy" >&2
   exit 2
 fi
