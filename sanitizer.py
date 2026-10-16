@@ -3,23 +3,31 @@
 
 `sanitize(record)` returns a new record, or raises SanitizerBlocked and
 returns nothing. Any unexpected condition is a block: unknown keys, wrong
-types, invalid JSON, leftover PII or secrets after redaction, or an
-internal exception.
+types, invalid JSON, leftover PII or secrets after redaction, a deny-pass
+hit, or an internal exception.
+
+Application records are not public output. Do not pass them to sanitize.
+Extra keys on an application (interview_style, dated notes, recruiter
+mail) must never reach this module, or they would fail closed and stall
+the published board. render_site.py ignores applications.json entirely.
 
 Allowlist
 ---------
-Built from the records JobWatch already persists and publishes. A key that
-is not in this table is refused, even if its value looks harmless. Missing
-keys are allowed; extra keys are not.
+Built from the records the public page is allowed to emit. Extra keys are
+refused. Missing keys are allowed.
 
-State file (`jobwatch_state.json`), written by jobwatch.py:
+`name` is the company name only. `label` is a closed enum from taxonomy.
+Application fields are not here: status (as an application state), note,
+last_contact, match, why, relationship_note, rel_note, resume.
+
+State file (`jobwatch_state.json`):
 
     version                 int
     last_run                str | None
     boards                  map of board-slug -> board record
     jobs                    map of job-id -> job record
 
-Job record (poller + state):
+Job record:
 
     id, board, company, title, location, url    str
     terms, flags, skills                        list[str]
@@ -29,85 +37,67 @@ Job record (poller + state):
 
 Board stats record:
 
-    company, platform, status                   str
+    company, platform                           str
+    status                                      board enum: ok | failed
     live, matches                               int | None
     dropped_non_us, locations_resolved          int
     with_posted_band, with_jd                   int
 
-Applications file (`applications.json`):
+Organization record (public projection only):
 
-    updated, note                               str
-    applications                                list[application record]
-
-Application record:
-
-    company, title, status, note                str
-    match                                       str | None
-    last_contact                                str
-
-Organizations file (`organizations.json`):
-
-    updated, note                               str
-    organizations                               list[organization record]
-
-Organization record (hand-maintained):
-
-    name, board, industry, sector, arch, fit    str
-    team, why, locations, careers               str
-    relationship, relationship_note             str
-    relationship_url                            str
+    name                                        company name
+    board, industry, sector, arch, fit          str | None
+    team, locations, careers                    str
+    relationship, relationship_url              str
     traffic, warm_channel, open_now             bool
     comp                                        nested compensation record
 
 Compensation record:
 
-    levels_company, tier, note, confidence      str
-    level_source, level_confidence              str
+    levels_company                              company name
+    tier, confidence, level_confidence          str
+    level_source                                str | None
     target_level, amazon_equiv                  str | None
     median_total                                int | None
 
-Dismissed file (`dismissed.json`):
+Dismissed file:
 
     dismissed                                   list[str]  (job ids)
 
-Rendered job row (render_site.build_rows):
+Rendered job row: job fields plus tier, sde, place, since, competency,
+pay, and no application status or resume variant.
 
-    id, company, title, location, url, board    str
-    terms, skills                               list[str]
-    tier, place, since, competency, resume      str
-    status                                      str | None
-    sde, jd_seen                                bool
-    pay                                         [int, int] | None
+Rendered org card: public org fields plus industry_label, arch_label,
+fit_label (enum labels), warm, rel_url, polled, gauge, geo, scanned,
+board_status, median, median_conf, pay_note, pay_tier, level_conf,
+move, reqs. No why, no rel_note.
 
-Rendered organization card (render_site.build_orgs):
-
-    name, team, why, locations, careers         str
-    industry_label, arch_label, fit_label       str
-    relationship, rel_note, rel_url             str
-    median_conf, pay_note, pay_tier             str
-    level_conf, move                            str
-    industry, sector, arch, fit                 str | None
-    target_level, amazon_equiv                  str | None
-    board_status                                str | None
-    traffic, warm, polled                       bool
-    scanned, median                             int | None
-    geo                                         list[str]
-    gauge                                       nested gauge record | None
-    reqs                                        list[rendered job row]
-
-Gauge record:
-
-    bar, label                                  str
-    rank                                        int
-
-Callers must not emit a record that did not come back from sanitize.
+Gauge: bar (str), label (enum), rank (int)
 """
 
 from __future__ import annotations
 
+import html as html_lib
 import json
 import os
 import re
+import unicodedata
+
+from taxonomy import (
+    ARCH_LABELS,
+    COMPETENCIES,
+    FALLBACK_COMPETENCY,
+    FIT_GAUGE,
+    FIT_LABELS,
+    INDUSTRY_LABELS,
+    LEVEL_MOVE_LABELS,
+    RESUMES,
+    SECTOR_LABELS,
+    SKILL_BANDS,
+    SKILLS,
+    STATUS_META,
+    TIER_META,
+)
 
 
 class SanitizerBlocked(Exception):
@@ -129,6 +119,9 @@ _RECORD = "record"
 _RECORD_OR_NONE = "record?"
 _RECORD_LIST = "record[]"
 _RECORD_MAP = "record{}"
+_COMPANY = "company"
+_LABEL = "label"
+_BOARD_STATUS = "board_status"
 
 KEY_TYPES = {
     # state
@@ -139,7 +132,7 @@ KEY_TYPES = {
     # job
     "id": _STR,
     "board": _STR,
-    "company": _STR,
+    "company": _COMPANY,
     "title": _STR,
     "location": _STR,
     "url": _STR,
@@ -151,7 +144,7 @@ KEY_TYPES = {
     "jd_seen": _BOOL,
     "first_seen": _STR,
     "last_seen": _STR,
-    # board stats
+    # board stats — status here is ok/failed, never an application state
     "platform": _STR,
     "live": _INT_OR_NONE,
     "matches": _INT_OR_NONE,
@@ -159,16 +152,11 @@ KEY_TYPES = {
     "locations_resolved": _INT,
     "with_posted_band": _INT,
     "with_jd": _INT,
-    "status": _STR_OR_NONE,
-    # applications file / record
+    "status": _BOARD_STATUS,
+    # organizations (public projection)
     "updated": _STR,
-    "note": _STR,
-    "applications": _RECORD_LIST,
-    "match": _STR_OR_NONE,
-    "last_contact": _STR,
-    # organizations file / record
     "organizations": _RECORD_LIST,
-    "name": _STR,
+    "name": _COMPANY,
     "industry": _STR_OR_NONE,
     "sector": _STR_OR_NONE,
     "arch": _STR_OR_NONE,
@@ -177,15 +165,13 @@ KEY_TYPES = {
     "warm_channel": _BOOL,
     "open_now": _BOOL,
     "team": _STR,
-    "why": _STR,
     "locations": _STR,
     "careers": _STR,
     "comp": _RECORD,
     "relationship": _STR,
-    "relationship_note": _STR,
     "relationship_url": _STR,
     # compensation
-    "levels_company": _STR,
+    "levels_company": _COMPANY,
     "median_total": _INT_OR_NONE,
     "target_level": _STR_OR_NONE,
     "amazon_equiv": _STR_OR_NONE,
@@ -200,20 +186,18 @@ KEY_TYPES = {
     "place": _STR,
     "since": _STR,
     "competency": _STR,
-    "resume": _STR,
     "pay": _PAY,
     # rendered org
-    "industry_label": _STR,
-    "arch_label": _STR,
-    "fit_label": _STR,
+    "industry_label": _LABEL,
+    "arch_label": _LABEL,
+    "fit_label": _LABEL,
     "warm": _BOOL,
-    "rel_note": _STR,
     "rel_url": _STR,
     "polled": _BOOL,
     "gauge": _RECORD_OR_NONE,
     "geo": _STR_LIST,
     "scanned": _INT_OR_NONE,
-    "board_status": _STR_OR_NONE,
+    "board_status": _BOARD_STATUS,
     "median": _INT_OR_NONE,
     "median_conf": _STR,
     "pay_note": _STR,
@@ -221,16 +205,52 @@ KEY_TYPES = {
     "level_conf": _STR,
     "move": _STR,
     "reqs": _RECORD_LIST,
-    # gauge
+    # gauge / enum label
     "bar": _STR,
-    "label": _STR,
+    "label": _LABEL,
     "rank": _INT,
 }
 
 ALLOWED_KEYS = frozenset(KEY_TYPES)
 
-# Applicant-profile values. Operators add real ones via applicant_profile.json
-# (gitignored) or JOBWATCH_APPLICANT_NAMES. Tests append here.
+# Keys that used to be published and must never appear on a public record.
+PRIVATE_KEYS = frozenset({
+    "note", "last_contact", "match", "why", "relationship_note", "rel_note",
+    "resume", "applications", "interview_style",
+})
+
+BOARD_STATUS_ENUM = frozenset({"ok", "failed", None})
+
+
+def _build_label_enum():
+    labels = {
+        "",
+        "unclassified",
+        "Lead with",
+        "Proven, table stakes",
+        "Gaps to name",
+        "Unknown",
+    }
+    for meta in (TIER_META, STATUS_META, FIT_GAUGE):
+        for row in meta.values():
+            if isinstance(row, dict) and row.get("label"):
+                labels.add(row["label"])
+    for mapping in (SECTOR_LABELS, INDUSTRY_LABELS, ARCH_LABELS, FIT_LABELS,
+                    LEVEL_MOVE_LABELS):
+        labels.update(mapping.values())
+    for competency in list(COMPETENCIES) + [FALLBACK_COMPETENCY]:
+        labels.add(competency["label"])
+    for resume in RESUMES.values():
+        labels.add(resume["label"])
+    for skill in SKILLS:
+        labels.add(skill["label"])
+    for _key, band_label in SKILL_BANDS:
+        labels.add(band_label)
+    return frozenset(labels)
+
+
+LABEL_ENUM = _build_label_enum()
+
 APPLICANT_NAMES = []
 APPLICANT_ADDRESSES = []
 APPLICANT_PROFILE_URLS = []
@@ -242,17 +262,13 @@ PROFILE_PATH = os.path.join(HERE, "applicant_profile.json")
 
 
 # --------------------------------------------------------------------------
-# Detection. The same patterns redact and then re-scan.
+# Detection
 # --------------------------------------------------------------------------
 
-# Local-part @ domain.tld. Requires a dot in the domain so CSS @media and
-# JS identifiers cannot trip it.
 EMAIL_RE = re.compile(
     r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+\b"
 )
 
-# North-American and +country grouped numbers. ISO dates (2026-04-02) and
-# bare pay integers (250000) do not match.
 PHONE_RE = re.compile(
     r"(?<!\d)(?:\+?\d{1,3}[\s.-]*)?(?:\([2-9]\d{2}\)|[2-9]\d{2})[\s.-]\d{3}[\s.-]\d{4}(?!\d)"
 )
@@ -262,8 +278,6 @@ LINKEDIN_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Personal profile URLs, not org/repo paths (github.com/org/repo is two
-# segments and is left alone).
 PROFILE_URL_RE = re.compile(
     r"https?://(?:www\.)?(?:"
     r"linkedin\.com/(?:in|pub|mwlite/in)/[A-Za-z0-9_\-%/]+"
@@ -277,9 +291,6 @@ PROFILE_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# House number + capitalised street name + a real suffix. Abbreviations
-# without a period only count when they end the phrase or meet a comma, so
-# "11 percent ... high-tax state" cannot match on the letters "st".
 ADDRESS_RE = re.compile(
     r"\b\d{1,6}\s+"
     r"[A-Z][A-Za-z0-9.'\-]+(?:\s+[A-Z][A-Za-z0-9.'\-]+){0,4}\s+"
@@ -290,11 +301,17 @@ ADDRESS_RE = re.compile(
     r"(?:\s*,\s*[A-Z][A-Za-z .\-]+(?:\s*,\s*[A-Z]{2}(?:\s+\d{5}(?:-\d{4})?)?)?)?"
 )
 
-# Labeled applicant name in free text ("Name: Jane Doe").
 LABELED_NAME_RE = re.compile(
-    r"\b(?:[Nn]ame|[Aa]pplicant|[Cc]andidate)\s*[:\-]\s*"
-    r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b"
+    r"\b(?:[Nn]ame|[Aa]pplicant|[Cc]andidate|[Rr]ecruiter)\s*[:\-\u2013\u2014]\s*"
+    r"([A-Z][a-z]+(?:[\s\u2013\u2014\-][A-Z][a-z]+)+)\b"
 )
+
+# Jane—Doe / Ada–Lovelace: em/en dash used to hide a person name.
+EMDASH_NAME_RE = re.compile(
+    r"\b[A-Z][a-z]{1,20}[\u2013\u2014][A-Z][a-z]{1,20}\b"
+)
+
+MAILTO_RE = re.compile(r"mailto\s*:", re.IGNORECASE)
 
 SECRET_RES = (
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
@@ -318,7 +335,20 @@ _DETECTORS = (
     ("profile_url", PROFILE_URL_RE),
     ("address", ADDRESS_RE),
     ("labeled_name", LABELED_NAME_RE),
+    ("emdash_name", EMDASH_NAME_RE),
+    ("mailto", MAILTO_RE),
 )
+
+# Cyrillic / Greek / fullwidth lookalikes that survive a naive regex.
+_HOMOGLYPHS = str.maketrans({
+    "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p",
+    "\u0441": "c", "\u0443": "y", "\u0445": "x", "\u0456": "i",
+    "\u04bb": "h", "\u0501": "d", "\u0391": "A", "\u0395": "E",
+    "\u039f": "O", "\u03bf": "o", "\u03b1": "a", "\u03b5": "e",
+    "\uff20": "@", "\uff0e": ".", "\u2024": ".",
+    "\u00a0": " ", "\u200b": "", "\u200c": "", "\u200d": "",
+    "\ufeff": "",
+})
 
 
 def _is_int(value):
@@ -349,8 +379,57 @@ def _profile_literals():
     return out
 
 
-def _find_blocked(text):
-    """Return a short reason if text still contains a blocked pattern."""
+def _strip_comments(text):
+    text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    text = re.sub(r"(?m)//.*?$", "", text)
+    return text
+
+
+def _decode_entities(text):
+    # Twice: &amp;#109;ailto: and &#109;ailto: both have to land as mailto:
+    once = html_lib.unescape(text)
+    return html_lib.unescape(once)
+
+
+def _deny_normalize(text):
+    """Case-fold, NFKC, map homoglyphs, strip comments, decode entities."""
+    if not text:
+        return ""
+    folded = unicodedata.normalize("NFKC", text).casefold()
+    folded = folded.translate(_HOMOGLYPHS)
+    folded = _decode_entities(folded)
+    folded = _strip_comments(folded)
+    folded = unicodedata.normalize("NFKC", folded).translate(_HOMOGLYPHS)
+    return folded
+
+
+def _script_json_payloads(text):
+    payloads = []
+    for match in re.finditer(r"<script\b[^>]*>(.*?)</script>", text, flags=re.DOTALL | re.IGNORECASE):
+        body = match.group(1).strip()
+        if not body:
+            continue
+        payloads.append(body)
+        try:
+            payloads.append(json.dumps(json.loads(body), ensure_ascii=False))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+    return payloads
+
+
+def _data_attr_payloads(text):
+    return [
+        match.group(2)
+        for match in re.finditer(
+            r"""data-(?:notes?|email|phone|name|profile)\s*=\s*(['"])(.*?)\1""",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+    ]
+
+
+def _find_blocked_plain(text):
     if not text:
         return None
     if EMAIL_RE.search(text):
@@ -365,13 +444,40 @@ def _find_blocked(text):
         return "address"
     if LABELED_NAME_RE.search(text):
         return "name"
+    if EMDASH_NAME_RE.search(text):
+        return "name"
+    if MAILTO_RE.search(text):
+        return "mailto"
     for secret_re in SECRET_RES:
         if secret_re.search(text):
             return "secret"
-    lowered = text.lower()
+    lowered = text.casefold()
     for literal in _profile_literals():
-        if literal.lower() in lowered:
+        if literal.casefold() in lowered:
             return "applicant_profile"
+    return None
+
+
+def _find_blocked(text):
+    """Return a short reason if text still contains a blocked pattern."""
+    if not text:
+        return None
+    if not isinstance(text, str):
+        return "public text is not a string"
+    hit = _find_blocked_plain(text)
+    if hit:
+        return hit
+    normalized = _deny_normalize(text)
+    hit = _find_blocked_plain(normalized)
+    if hit:
+        return hit
+    for payload in _script_json_payloads(text) + _data_attr_payloads(text):
+        hit = _find_blocked(payload) if payload != text else _find_blocked_plain(payload)
+        if hit:
+            return hit
+        hit = _find_blocked_plain(_deny_normalize(payload))
+        if hit:
+            return hit
     return None
 
 
@@ -436,18 +542,28 @@ def _check_type(key, value, expected):
             and all(isinstance(item, str) for item in value)
             and all(isinstance(item, dict) for item in value.values())
         )
+    if expected == _COMPANY:
+        return isinstance(value, str) and value != ""
+    if expected == _LABEL:
+        return isinstance(value, str) and value in LABEL_ENUM
+    if expected == _BOARD_STATUS:
+        return value in BOARD_STATUS_ENUM or value in ("ok", "failed")
     return False
 
 
 def _sanitize_value(key, value, expected):
     if not _check_type(key, value, expected):
         raise SanitizerBlocked("wrong type for {}".format(key))
-    if expected == _STR:
+    if expected in (_STR, _COMPANY):
         return _redact_text(value)
     if expected == _STR_OR_NONE:
         return None if value is None else _redact_text(value)
     if expected == _STR_LIST:
         return [_redact_text(item) for item in value]
+    if expected == _LABEL:
+        return value
+    if expected == _BOARD_STATUS:
+        return value
     if expected == _RECORD:
         return _sanitize_dict(value)
     if expected == _RECORD_OR_NONE:
@@ -467,6 +583,9 @@ def _sanitize_value(key, value, expected):
 def _sanitize_dict(record):
     if not isinstance(record, dict):
         raise SanitizerBlocked("record is not a dict")
+    leaked = set(record) & PRIVATE_KEYS
+    if leaked:
+        raise SanitizerBlocked("private keys: {}".format(", ".join(sorted(leaked))))
     unknown = set(record) - ALLOWED_KEYS
     if unknown:
         raise SanitizerBlocked("unknown keys: {}".format(", ".join(sorted(unknown))))
@@ -504,10 +623,11 @@ def _sanitize(record):
 
 
 def sanitize(record):
-    """Sanitize one record for public output.
+    """Sanitize one public record.
 
     Accepts a dict or a JSON string/bytes of a dict. Returns a new dict.
     Raises SanitizerBlocked — and returns nothing — on any failure.
+    Application records are not public records; do not call this on them.
     """
     try:
         return _sanitize(record)
@@ -518,7 +638,7 @@ def sanitize(record):
 
 
 def sanitize_records(records):
-    """Sanitize a list of records. Any failure blocks the whole batch."""
+    """Sanitize a list of public records. Any failure blocks the whole batch."""
     try:
         if not isinstance(records, list):
             raise SanitizerBlocked("records is not a list")
