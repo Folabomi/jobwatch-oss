@@ -1405,7 +1405,12 @@ class DenyPassLiveBoardAndDrops(unittest.TestCase):
     def test_live_fixture_zero_percent_blocked(self):
         data = fixture_json("live_postings.json")
         postings = data["postings"]
-        self.assertGreater(len(postings), 0)
+        self.assertEqual(len(postings), 17)
+        for posting in postings:
+            self.assertEqual(
+                set(posting),
+                {"id", "board", "company", "title", "location", "url"},
+            )
         blocked = 0
         reset_drops()
         for index, posting in enumerate(postings):
@@ -1425,6 +1430,278 @@ class DenyPassLiveBoardAndDrops(unittest.TestCase):
             self.assertNotIn(sanitizer.REDACTED, json.dumps(cleaned))
         self.assertEqual(blocked, 0)
         self.assertEqual(blocked / float(len(postings)), 0.0)
+
+
+class DenyPassQaRereview(unittest.TestCase):
+    def setUp(self):
+        reset_drops()
+
+    def _ordered_job(self, first_key, first_value, second_key, second_value):
+        record = {first_key: first_value, second_key: second_value}
+        for key, value in CLEAN_JOB.items():
+            if key not in record:
+                record[key] = value
+        return record
+
+    def test_deny_runs_before_vocab_miss_location_first(self):
+        record = self._ordered_job(
+            "location", "Zzyzx, Atlantis",
+            "title", "SWE got offer",
+        )
+        self.assertEqual(list(record)[:2], ["location", "title"])
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(record)
+
+    def test_deny_runs_before_vocab_miss_title_first(self):
+        record = self._ordered_job(
+            "title", "SWE got offer",
+            "location", "Zzyzx, Atlantis",
+        )
+        self.assertEqual(list(record)[:2], ["title", "location"])
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(record)
+
+    def test_vocab_miss_alone_still_drops_both_key_orders(self):
+        loc_first = self._ordered_job(
+            "location", "Zzyzx, Atlantis",
+            "title", "DDoS Mitigation Engineer",
+        )
+        title_first = self._ordered_job(
+            "title", "DDoS Mitigation Engineer",
+            "location", "Zzyzx, Atlantis",
+        )
+        with self.assertRaises(VocabMiss) as caught:
+            sanitize(loc_first)
+        self.assertEqual(caught.exception.field, "location")
+        with self.assertRaises(VocabMiss) as caught:
+            sanitize(title_first)
+        self.assertEqual(caught.exception.field, "location")
+
+    def test_workday_director_data_infra_url_passes(self):
+        url = (
+            "https://crowdstrike.wd5.myworkdayjobs.com/en-US/"
+            "crowdstrikecareers/job/USA---New-York-NY/"
+            "Director--Engineering---Data-Infrastructure---Reliability_R30161"
+        )
+        cleaned = sanitize(job_with(company="CrowdStrike", url=url))
+        self.assertEqual(cleaned["url"], url)
+
+    def test_workday_data_scientist_applied_ai_ml_url_passes(self):
+        url = (
+            "https://crowdstrike.wd5.myworkdayjobs.com/en-US/"
+            "crowdstrikecareers/job/USA---New-York-NY/"
+            "Data-Scientist--Applied-AI-ML_R29843"
+        )
+        cleaned = sanitize(job_with(company="CrowdStrike", url=url))
+        self.assertEqual(cleaned["url"], url)
+
+    def test_workday_triple_dash_location_and_req_suffix_pass(self):
+        url = (
+            "https://crowdstrike.wd5.myworkdayjobs.com/en-US/"
+            "crowdstrikecareers/job/USA---Sunnyvale-CA/"
+            "Sr-Engineer--AI---AI-Detection-and-Response--AIDR---Hybrid-_R26576-1"
+        )
+        cleaned = sanitize(job_with(company="CrowdStrike", url=url))
+        self.assertEqual(cleaned["url"], url)
+
+    def test_greenhouse_hex_email_path_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://boards.greenhouse.io/acme/jobs/6a616e6540782e636f6d",
+            ))
+
+    def test_ashby_hex_email_uuid_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://jobs.ashbyhq.com/openai/6a616e65-4078-2e63-6f6d-000000000001",
+            ))
+
+    def test_numeric_ats_id_still_exempt(self):
+        url = "https://boards.greenhouse.io/cloudflare/jobs/7558153"
+        cleaned = sanitize(job_with(company="Cloudflare", url=url))
+        self.assertEqual(cleaned["url"], url)
+
+    def test_real_uuid_without_printable_hex_still_passes(self):
+        url = "https://jobs.ashbyhq.com/openai/3c67f712-697d-48d8-b05c-01be896e61da"
+        cleaned = sanitize(job_with(company="OpenAI", url=url))
+        self.assertEqual(cleaned["url"], url)
+
+    def test_multi_city_semicolon_locations_pass(self):
+        cleaned = sanitize(job_with(
+            location="Austin, TX; Dallas, TX; New York, NY",
+        ))
+        self.assertEqual(cleaned["location"], "Austin, TX; Dallas, TX; New York, NY")
+
+    def test_washington_dc_district_of_columbia_passes(self):
+        loc = "Washington DC,District of Columbia,United States of America"
+        cleaned = sanitize(job_with(location=loc))
+        self.assertEqual(cleaned["location"], loc)
+
+    def test_takehome_assessments_platform_still_passes(self):
+        cleaned = sanitize(job_with(title="Take-Home Assessments Platform"))
+        self.assertEqual(cleaned["title"], "Take-Home Assessments Platform")
+
+    def test_team_developer_platform_passes(self):
+        cleaned = sanitize(dict(CLEAN_ORG, team="Developer Platform"))
+        self.assertEqual(cleaned["team"], "Developer Platform")
+
+    def test_team_ads_passes(self):
+        cleaned = sanitize(dict(CLEAN_ORG, team="Ads"))
+        self.assertEqual(cleaned["team"], "Ads")
+
+    def test_team_studio_technology_passes(self):
+        cleaned = sanitize(dict(CLEAN_ORG, team="Studio Technology"))
+        self.assertEqual(cleaned["team"], "Studio Technology")
+
+    def test_drop_rate_exactly_ten_percent_keeps_page(self):
+        records = [job_with(id="greenhouse:acme:{}".format(i)) for i in range(10)]
+        records[0] = job_with(id="greenhouse:acme:0", location="Atlantis")
+        kept = sanitize_records(records)
+        self.assertEqual(len(kept), 9)
+        self.assertEqual(last_drop_counts(), {"location": 1})
+
+    def test_drop_count_exactly_25_keeps_page(self):
+        records = [
+            job_with(id="greenhouse:acme:{}".format(i), location="Denver, CO")
+            for i in range(250)
+        ]
+        for i in range(25):
+            records[i] = job_with(
+                id="greenhouse:acme:{}".format(i),
+                location="Atlantis",
+            )
+        kept = sanitize_records(records)
+        self.assertEqual(len(kept), 225)
+        self.assertEqual(last_drop_counts(), {"location": 25})
+
+    def test_dropped_value_never_appears_in_logs_or_output(self):
+        buf = io.StringIO()
+        records = [job_with(id="greenhouse:acme:{}".format(i)) for i in range(10)]
+        records[0] = job_with(id="greenhouse:acme:0", location="Atlantis")
+        with mock.patch("sys.stderr", buf):
+            kept = sanitize_records(records)
+            print(format_drop_counts(), file=sys.stderr)
+        dumped = json.dumps(kept)
+        logs = buf.getvalue()
+        for sink in (dumped, logs, format_drop_counts(), json.dumps(last_drop_counts())):
+            self.assertNotIn("Atlantis", sink)
+            self.assertNotIn(sanitizer.REDACTED, sink)
+        self.assertIn("drops_location=1", logs)
+
+    def test_render_org_vocab_miss_uses_drop_budget(self):
+        import render_site as rs
+        state = example("jobwatch_state.sample.json")
+        orgs = [dict(row) for row in example("organizations.sample.json")["organizations"]]
+        orgs[0]["locations"] = "Atlantis"
+        html, js = rs.render(state, "demo", orgs, [])
+        self.assertNotIn("Atlantis", html)
+        self.assertNotIn("Atlantis", js)
+        self.assertEqual(last_drop_counts().get("locations"), 1)
+        self.assertNotIn("Atlantis", format_drop_counts())
+
+    def test_render_org_vocab_miss_over_budget_fails_page(self):
+        import render_site as rs
+        state = example("jobwatch_state.sample.json")
+        template = example("organizations.sample.json")["organizations"][0]
+        orgs = [dict(template, locations="Atlantis") for _ in range(26)]
+        with self.assertRaises(SanitizerBlocked):
+            rs.render(state, "demo", orgs, [])
+
+    def test_main_catches_org_vocab_miss(self):
+        import render_site as rs
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        out = os.path.join(tmp, "site")
+        state_path = os.path.join(tmp, "state.json")
+        orgs_path = os.path.join(tmp, "organizations.json")
+        with open(state_path, "w", encoding="utf-8") as handle:
+            json.dump(example("jobwatch_state.sample.json"), handle)
+        raw_orgs = [dict(row) for row in example("organizations.sample.json")["organizations"]]
+        raw_orgs[0]["locations"] = "Atlantis"
+        raw_orgs[0]["why"] = "secret"
+        with open(orgs_path, "w", encoding="utf-8") as handle:
+            json.dump({"organizations": raw_orgs}, handle)
+        buf = io.StringIO()
+        with mock.patch.object(rs, "STATE_PATH", state_path), \
+                mock.patch.object(rs, "ORGS_PATH", orgs_path), \
+                mock.patch.object(rs, "HIDDEN_PATH", os.path.join(tmp, "dismissed.json")), \
+                mock.patch.object(sys, "argv", ["render_site.py", "--out", out, "--slug", "demo"]), \
+                mock.patch("sys.stderr", buf):
+            rs.main()
+        with io.open(os.path.join(out, "demo"), encoding="utf-8") as handle:
+            page = handle.read()
+        self.assertNotIn("Atlantis", page)
+        self.assertNotIn("secret", page)
+        self.assertNotIn("Atlantis", buf.getvalue())
+
+    def test_record_live_writes_pending_not_committed(self):
+        import jobwatch
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        pending = os.path.join(tmp, "live_postings.pending.json")
+        committed = os.path.join(FIXTURES, "live_postings.json")
+        vocab = os.path.join(FIXTURES, "live_field_vocab.json")
+        with io.open(committed, encoding="utf-8") as handle:
+            before_c = handle.read()
+        with io.open(vocab, encoding="utf-8") as handle:
+            before_v = handle.read()
+        matches = {
+            "x": {
+                "id": "greenhouse:acme:1",
+                "board": "acme",
+                "company": "Acme Cloud",
+                "title": "Zzyzxian Platform Engineer",
+                "location": "Denver, CO",
+                "url": "https://example.com/jobs/1",
+            }
+        }
+        with mock.patch.object(sanitizer, "LIVE_PENDING_PATH", pending), \
+                mock.patch.object(jobwatch, "poll", return_value=(matches, ["acme"], [], {})):
+            payload = jobwatch.record_public_postings()
+        self.assertTrue(os.path.exists(pending))
+        with io.open(committed, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), before_c)
+        with io.open(vocab, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), before_v)
+        self.assertFalse(os.path.exists(os.path.join(tmp, "live_field_vocab.json")))
+        with io.open(pending, encoding="utf-8") as handle:
+            written = json.load(handle)
+        self.assertEqual(written["postings"][0]["title"], "Zzyzxian Platform Engineer")
+        self.assertNotIn("team", written)
+        self.assertNotIn("Zzyzxian", before_v)
+        with self.assertRaises(VocabMiss):
+            sanitize(dict(CLEAN_ORG, team="Zzyzxian"))
+        self.assertEqual(payload["match_count"], 1)
+
+    def test_record_live_refuses_committed_dest(self):
+        import jobwatch
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        pending = os.path.join(tmp, "live_postings.pending.json")
+        committed = os.path.join(FIXTURES, "live_postings.json")
+        vocab = os.path.join(FIXTURES, "live_field_vocab.json")
+        with io.open(committed, encoding="utf-8") as handle:
+            before_c = handle.read()
+        with io.open(vocab, encoding="utf-8") as handle:
+            before_v = handle.read()
+        matches = {
+            "x": {
+                "id": "greenhouse:acme:1",
+                "board": "acme",
+                "company": "Acme Cloud",
+                "title": "Zzyzxian Platform Engineer",
+                "location": "Denver, CO",
+                "url": "https://example.com/jobs/1",
+            }
+        }
+        with mock.patch.object(sanitizer, "LIVE_PENDING_PATH", pending), \
+                mock.patch.object(jobwatch, "poll", return_value=(matches, ["acme"], [], {})):
+            jobwatch.record_public_postings(dest=sanitizer.LIVE_POSTINGS_PATH)
+        with io.open(committed, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), before_c)
+        with io.open(vocab, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), before_v)
+        self.assertTrue(os.path.exists(pending))
 
 
 class DeploySiteHold(unittest.TestCase):
@@ -1470,10 +1747,10 @@ TEST_CASES = (
     DenyPassFormatAndBoardNames, DenyPassCommentsAndScript,
     DenyPassDataAndDataset, DeploySiteHold, KnownCompaniesHardcoded,
     DenyPassLeaksAndUrls, DenyPassOnsiteWhenAndAllowlist,
-    DenyPassLiveBoardAndDrops,
+    DenyPassLiveBoardAndDrops, DenyPassQaRereview,
 )
 
-EXPECTED_SANITIZER_TESTS = 256
+EXPECTED_SANITIZER_TESTS = 280
 
 
 def _discovered_count():

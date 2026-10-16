@@ -510,6 +510,16 @@ CAMEL_RE = re.compile(
 
 SLUG_RE = re.compile(r"^[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)+$")
 
+# Workday path segments: location prefix (USA---New-York-NY), title slugs
+# with -- / --- separators, and a trailing _R##### or -_R#####-N req id.
+WORKDAY_SLUG_RE = re.compile(
+    r"(?i)^(?:"
+    r"[A-Za-z]{2,3}---[A-Za-z0-9]+(?:-{1,3}[A-Za-z0-9]+)*"
+    r"|"
+    r"[A-Za-z0-9]+(?:-{1,3}[A-Za-z0-9]+)+-?_R\d+(?:-\d+)?"
+    r")$"
+)
+
 ATS_HOST_SUFFIXES = (
     ".greenhouse.io",
     ".ashbyhq.com",
@@ -956,9 +966,13 @@ _FIELD_CONNECTORS = frozenset({
 _FIELD_VOCAB_EXTRAS = frozenset({
     "portland", "defense", "reporting", "sinkholing",
     "americas", "america", "gatos", "bay", "area",
+    "dallas", "washington", "district", "columbia", "city",
+    "developer", "ads", "studio", "technology",
+    "houston", "phoenix", "philadelphia", "miami", "brooklyn",
 })
 LIVE_VOCAB_PATH = os.path.join(HERE, "tests", "fixtures", "live_field_vocab.json")
 LIVE_POSTINGS_PATH = os.path.join(HERE, "tests", "fixtures", "live_postings.json")
+LIVE_PENDING_PATH = os.path.join(HERE, "tests", "fixtures", "live_postings.pending.json")
 
 _LOCATION_COUNTRY_RE = re.compile(
     r"(?i)(?:,\s*)?(?:"
@@ -1000,21 +1014,27 @@ def _walk_vocab(obj, bucket, depth=0):
 
 
 def _live_vocab_tokens():
+    """Committed vocab + city tokens from live posting locations.
+
+    Titles are not a team seed. Pending review files are not read.
+    """
     bucket = set()
-    for path in (LIVE_VOCAB_PATH, LIVE_POSTINGS_PATH):
-        if not os.path.exists(path):
-            continue
-        with open(path, encoding="utf-8") as handle:
+    if os.path.exists(LIVE_VOCAB_PATH):
+        with open(LIVE_VOCAB_PATH, encoding="utf-8") as handle:
             data = json.load(handle)
-        if not isinstance(data, dict):
-            continue
-        for key in ("team", "city", "tokens"):
-            _walk_vocab(data.get(key) or [], bucket)
-        for posting in data.get("postings") or []:
-            if not isinstance(posting, dict):
-                continue
-            _add_vocab_tokens(bucket, posting.get("title") or "")
-            _add_vocab_tokens(bucket, _location_vocab_text(posting.get("location") or ""))
+        if isinstance(data, dict):
+            for key in ("team", "city", "tokens"):
+                _walk_vocab(data.get(key) or [], bucket)
+    if os.path.exists(LIVE_POSTINGS_PATH):
+        with open(LIVE_POSTINGS_PATH, encoding="utf-8") as handle:
+            data = json.load(handle)
+        if isinstance(data, dict):
+            for posting in data.get("postings") or []:
+                if not isinstance(posting, dict):
+                    continue
+                _add_vocab_tokens(
+                    bucket, _location_vocab_text(posting.get("location") or "")
+                )
     return bucket
 
 
@@ -1091,15 +1111,24 @@ def _field_vocab_blocked(key, value):
     return _field_vocab_miss(key, value)
 
 
+def _uuid_hex_is_safe(token):
+    """True when no 16+ hex run in the UUID decodes to printable ASCII."""
+    compact = (token or "").replace("-", "")
+    return not _printable_hex_leak(compact)
+
+
+def _is_workday_slug(token):
+    return bool(token and WORKDAY_SLUG_RE.match(token))
+
+
 def _is_exempt_job_id(token):
+    """Numeric ATS ids, and UUIDs whose hex does not decode to printable ASCII."""
     raw = (token or "").rstrip("=")
     if not raw:
         return True
     if raw.isdigit():
         return True
-    if UUID_RE.match(raw):
-        return True
-    if HEX_ID_RE.match(raw) and len(raw) >= 8:
+    if UUID_RE.match(raw) and _uuid_hex_is_safe(raw):
         return True
     return False
 
@@ -1110,9 +1139,7 @@ def _is_ats_id_segment(segment):
         return True
     if _is_exempt_job_id(raw):
         return True
-    if SLUG_RE.match(raw):
-        return True
-    if CAMEL_RE.match(raw):
+    if _is_workday_slug(raw):
         return True
     return False
 
@@ -1570,17 +1597,48 @@ def _sanitize_value(key, value, expected):
     if expected == _RECORD_OR_NONE:
         return None if value is None else _sanitize_dict(value)
     if expected == _RECORD_LIST:
-        return [_sanitize_dict(item) for item in value]
+        cleaned = []
+        miss = None
+        for item in value:
+            try:
+                cleaned.append(_sanitize_dict(item))
+            except VocabMiss as exc:
+                if miss is None:
+                    miss = exc
+        if miss:
+            raise miss
+        return cleaned
     if expected == _RECORD_MAP:
         if key == "jobs":
             return _sanitize_droppable_map(value)
         cleaned = {}
+        miss = None
         for map_key, map_value in value.items():
             if _find_blocked(map_key):
                 raise SanitizerBlocked("blocked map key")
-            cleaned[map_key] = _sanitize_dict(map_value)
+            try:
+                cleaned[map_key] = _sanitize_dict(map_value)
+            except VocabMiss as exc:
+                if miss is None:
+                    miss = exc
+        if miss:
+            raise miss
         return cleaned
     return value
+
+
+def _mask_exempt_uuids_in_text(text):
+    """Hide numeric-safe UUIDs. Hex that decodes to printable ASCII stays."""
+    if not text:
+        return text
+
+    def repl(match):
+        token = match.group(0)
+        if _uuid_hex_is_safe(token):
+            return "id"
+        return token
+
+    return UUID_SHAPE_RE.sub(repl, text)
 
 
 def _sanitize_dict(record):
@@ -1593,19 +1651,19 @@ def _sanitize_dict(record):
     if unknown:
         raise SanitizerBlocked("unknown keys: {}".format(", ".join(sorted(unknown))))
     out = {}
+    miss = None
     for key, value in record.items():
-        out[key] = _sanitize_value(key, value, KEY_TYPES[key])
-    dump = _mask_ats_ids_in_text(_public_dump(out))
-    if any(
-        isinstance(value, str)
-        and value.startswith("https://")
-        and _is_ats_host(urlparse(value).hostname)
-        for value in out.values()
-    ):
-        dump = UUID_SHAPE_RE.sub("id", dump)
+        try:
+            out[key] = _sanitize_value(key, value, KEY_TYPES[key])
+        except VocabMiss as exc:
+            if miss is None:
+                miss = exc
+    dump = _mask_exempt_uuids_in_text(_mask_ats_ids_in_text(_public_dump(out)))
     leftover = _find_blocked(dump)
     if leftover:
         raise SanitizerBlocked("residual {} after redaction".format(leftover))
+    if miss:
+        raise miss
     return out
 
 

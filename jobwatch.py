@@ -604,13 +604,20 @@ def render_report(matches, previous, ok_slugs, failures, diff_mode, first_run):
 
 
 def record_public_postings(boards=None, dest=None):
-    """Run poll() and write public posting fields plus a team/city vocab seed.
+    """Run poll() and write public posting fields to a review file.
 
-    No applications, JD text, or other PII. Used to refresh the live fixture.
+    Never overwrites the committed live fixture or the team/city vocab.
+    Team tokens are not derived from titles.
     """
     import sanitizer as _san
     boards = boards or BOARDS
-    dest = dest or _san.LIVE_POSTINGS_PATH
+    committed = {
+        os.path.abspath(_san.LIVE_POSTINGS_PATH),
+        os.path.abspath(_san.LIVE_VOCAB_PATH),
+    }
+    dest = dest or _san.LIVE_PENDING_PATH
+    if os.path.abspath(dest) in committed:
+        dest = _san.LIVE_PENDING_PATH
     matches, ok_slugs, failures, stats = poll(boards)
     postings = []
     for key, match in sorted(matches.items()):
@@ -625,12 +632,6 @@ def record_public_postings(boards=None, dest=None):
             "location": match["location"],
             "url": url,
         })
-    team, city = set(), set()
-    for posting in postings:
-        for tok in _san._field_tokens(posting["title"]):
-            team.add(tok)
-        for tok in _san._field_tokens(_san._location_vocab_text(posting["location"])):
-            city.add(tok)
     payload = {
         "polled": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": "jobwatch.poll public fields only; no applications, JD text, or PII",
@@ -640,13 +641,9 @@ def record_public_postings(boards=None, dest=None):
         "match_count": len(matches),
         "postings": postings,
     }
-    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
     with open(dest, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, ensure_ascii=False)
-        handle.write("\n")
-    vocab = {"source": payload["source"], "team": sorted(team), "city": sorted(city)}
-    with open(_san.LIVE_VOCAB_PATH, "w", encoding="utf-8") as handle:
-        json.dump(vocab, handle, indent=2, ensure_ascii=False)
         handle.write("\n")
     return payload
 
@@ -672,7 +669,8 @@ def main():
     parser.add_argument("--probe", action="store_true", help="print raw shapes, do not touch state")
     parser.add_argument("--list-boards", action="store_true", help="list board slugs and exit")
     parser.add_argument("--record-live", action="store_true",
-                        help="run poll() and write the public live fixture + vocab seed")
+                        help="run poll() and write public postings to "
+                             "tests/fixtures/live_postings.pending.json for review")
     args = parser.parse_args()
 
     if args.list_boards:

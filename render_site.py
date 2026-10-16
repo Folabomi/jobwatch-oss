@@ -25,8 +25,11 @@ HIDDEN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dismisse
 
 from sanitizer import (  # noqa: E402
     SanitizerBlocked,
+    VocabMiss,
+    check_drop_budget,
     format_drop_counts,
     last_drop_counts,
+    record_vocab_drop,
     reset_drops,
     sanitize,
     sanitize_records,
@@ -892,10 +895,15 @@ def render(state, slug, orgs_data=(), dismissed=()):
     state = sanitize(state)
     dismissed = sanitize({"dismissed": list(dismissed)})["dismissed"]
     rows = build_rows(state)
-    orgs = sanitize_records(
-        build_orgs(list(orgs_data), rows, state.get("boards") or {}),
-        accumulate=True,
-    )
+    try:
+        orgs = sanitize_records(
+            build_orgs(list(orgs_data), rows, state.get("boards") or {}),
+            accumulate=True,
+        )
+    except VocabMiss as exc:
+        record_vocab_drop(exc.field)
+        check_drop_budget()
+        orgs = []
     skills_svg, skills_n = skills_chart(rows)
     boards = state.get("boards") or {}
     ok = [b for b in boards.values() if b.get("status") == "ok"]
@@ -1329,6 +1337,15 @@ def main():
             print(format_drop_counts(counts), file=sys.stderr)
     except SanitizerBlocked as exc:
         # Fail closed: do not write HTML or JS, even leftovers from an older run.
+        print("sanitizer blocked public page: {}".format(exc), file=sys.stderr)
+        raise SystemExit(2)
+    except VocabMiss as exc:
+        record_vocab_drop(exc.field)
+        try:
+            check_drop_budget()
+        except SanitizerBlocked as blocked:
+            print("sanitizer blocked public page: {}".format(blocked), file=sys.stderr)
+            raise SystemExit(2)
         print("sanitizer blocked public page: {}".format(exc), file=sys.stderr)
         raise SystemExit(2)
 
