@@ -1704,6 +1704,229 @@ class DenyPassQaRereview(unittest.TestCase):
         self.assertTrue(os.path.exists(pending))
 
 
+class DenyPassCisoBar(unittest.TestCase):
+    B64_PADDED = "amFuZUB4LmNvbQ=="
+    B64_UNPADDED = "amFuZUB4LmNvbQ"
+    B64URL = "amFuZUB4LmNvbT4-"
+    B64_PCT = "amFuZUB4LmNvbQ%3D%3D"
+    B64_OF_HEX = "NmE2MTZlNjU0MDc4MmU2MzZmNmQ="
+    B64_OF_PCT = "amFuZSU0MHguY29t"
+    B64_PHONE = "NTU1LTEyMy00NTY3"
+
+    def test_greenhouse_slug_b64_padded_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://boards.greenhouse.io/acme/jobs/Sr-Engineer_" + self.B64_PADDED,
+            ))
+
+    def test_ashby_slug_b64_padded_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://jobs.ashbyhq.com/openai/Sr-Engineer_" + self.B64_PADDED,
+            ))
+
+    def test_workday_slug_b64_padded_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                company="CrowdStrike",
+                url=(
+                    "https://crowdstrike.wd5.myworkdayjobs.com/en-US/"
+                    "crowdstrikecareers/job/USA---New-York-NY/Sr-Engineer_"
+                    + self.B64_PADDED
+                ),
+            ))
+
+    def test_greenhouse_slug_b64_unpadded_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://boards.greenhouse.io/acme/jobs/Sr-Engineer_" + self.B64_UNPADDED,
+            ))
+
+    def test_ashby_slug_b64_unpadded_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://jobs.ashbyhq.com/openai/Sr-Engineer_" + self.B64_UNPADDED,
+            ))
+
+    def test_workday_slug_b64_unpadded_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                company="CrowdStrike",
+                url=(
+                    "https://crowdstrike.wd5.myworkdayjobs.com/en-US/"
+                    "crowdstrikecareers/job/USA---New-York-NY/Sr-Engineer_"
+                    + self.B64_UNPADDED
+                ),
+            ))
+
+    def test_greenhouse_slug_b64url_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://boards.greenhouse.io/acme/jobs/Sr-Engineer_" + self.B64URL,
+            ))
+
+    def test_ashby_slug_b64url_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://jobs.ashbyhq.com/openai/Sr-Engineer_" + self.B64URL,
+            ))
+
+    def test_workday_slug_b64url_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                company="CrowdStrike",
+                url=(
+                    "https://crowdstrike.wd5.myworkdayjobs.com/en-US/"
+                    "crowdstrikecareers/job/USA---New-York-NY/Sr-Engineer_"
+                    + self.B64URL
+                ),
+            ))
+
+    def test_greenhouse_slug_percent_b64_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://boards.greenhouse.io/acme/jobs/Sr-Engineer_" + self.B64_PCT,
+            ))
+
+    def test_ashby_slug_percent_b64_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://jobs.ashbyhq.com/openai/Sr-Engineer_" + self.B64_PCT,
+            ))
+
+    def test_workday_slug_percent_b64_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                company="CrowdStrike",
+                url=(
+                    "https://crowdstrike.wd5.myworkdayjobs.com/en-US/"
+                    "crowdstrikecareers/job/USA---New-York-NY/Sr-Engineer_"
+                    + self.B64_PCT
+                ),
+            ))
+
+    def test_greenhouse_slug_b64_of_hex_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://boards.greenhouse.io/acme/jobs/Sr-Engineer_" + self.B64_OF_HEX,
+            ))
+
+    def test_ashby_slug_b64_of_hex_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://jobs.ashbyhq.com/openai/Sr-Engineer_" + self.B64_OF_HEX,
+            ))
+
+    def test_workday_slug_b64_of_hex_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                company="CrowdStrike",
+                url=(
+                    "https://crowdstrike.wd5.myworkdayjobs.com/en-US/"
+                    "crowdstrikecareers/job/USA---New-York-NY/Sr-Engineer_"
+                    + self.B64_OF_HEX
+                ),
+            ))
+
+    def test_greenhouse_slug_b64_of_percent_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://boards.greenhouse.io/acme/jobs/Sr-Engineer_" + self.B64_OF_PCT,
+            ))
+
+    def test_ashby_slug_b64_of_percent_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://jobs.ashbyhq.com/openai/Sr-Engineer_" + self.B64_OF_PCT,
+            ))
+
+    def test_workday_slug_b64_of_percent_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                company="CrowdStrike",
+                url=(
+                    "https://crowdstrike.wd5.myworkdayjobs.com/en-US/"
+                    "crowdstrikecareers/job/USA---New-York-NY/Sr-Engineer_"
+                    + self.B64_OF_PCT
+                ),
+            ))
+
+    def test_greenhouse_slug_b64_phone_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://boards.greenhouse.io/acme/jobs/Sr-Engineer_" + self.B64_PHONE,
+            ))
+
+    def test_ashby_slug_b64_phone_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://jobs.ashbyhq.com/openai/Sr-Engineer_" + self.B64_PHONE,
+            ))
+
+    def test_workday_slug_b64_phone_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                company="CrowdStrike",
+                url=(
+                    "https://crowdstrike.wd5.myworkdayjobs.com/en-US/"
+                    "crowdstrikecareers/job/USA---New-York-NY/Sr-Engineer_"
+                    + self.B64_PHONE
+                ),
+            ))
+
+    def test_query_b64_email_fails_page_not_stripped(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://example.com/jobs/100?e=" + self.B64_PADDED,
+            ))
+
+    def test_query_b64_of_hex_fails_page_not_stripped(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://example.com/jobs/100?e=" + self.B64_OF_HEX,
+            ))
+
+    def test_openai_rfc4122_uuid_must_pass(self):
+        url = "https://jobs.ashbyhq.com/openai/5a647e2b-5d6c-4c71-aeea-b16e3fda4b3f"
+        cleaned = sanitize(job_with(company="OpenAI", url=url))
+        self.assertEqual(cleaned["url"], url)
+
+    def test_uuid_shaped_invalid_variant_still_fails(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://jobs.ashbyhq.com/openai/6a616e65-4078-2e63-6f6d-000000000001",
+            ))
+
+    def test_title_comma_takehome_assessments_platform_passes(self):
+        cleaned = sanitize(job_with(
+            title="Software Engineer, Take-Home Assessments Platform",
+        ))
+        self.assertEqual(
+            cleaned["title"],
+            "Software Engineer, Take-Home Assessments Platform",
+        )
+
+    def test_team_payments_passes(self):
+        cleaned = sanitize(dict(CLEAN_ORG, team="Payments"))
+        self.assertEqual(cleaned["team"], "Payments")
+
+    def test_team_ml_infra_passes(self):
+        cleaned = sanitize(dict(CLEAN_ORG, team="ML Infra"))
+        self.assertEqual(cleaned["team"], "ML Infra")
+
+    def test_team_identity_passes(self):
+        cleaned = sanitize(dict(CLEAN_ORG, team="Identity"))
+        self.assertEqual(cleaned["team"], "Identity")
+
+    def test_team_workers_passes(self):
+        cleaned = sanitize(dict(CLEAN_ORG, team="Workers"))
+        self.assertEqual(cleaned["team"], "Workers")
+
+    def test_team_zero_trust_passes(self):
+        cleaned = sanitize(dict(CLEAN_ORG, team="Zero Trust"))
+        self.assertEqual(cleaned["team"], "Zero Trust")
+
+
 class DeploySiteHold(unittest.TestCase):
     def test_deploy_site_honors_publish_hold(self):
         root = tempfile.mkdtemp()
@@ -1747,10 +1970,10 @@ TEST_CASES = (
     DenyPassFormatAndBoardNames, DenyPassCommentsAndScript,
     DenyPassDataAndDataset, DeploySiteHold, KnownCompaniesHardcoded,
     DenyPassLeaksAndUrls, DenyPassOnsiteWhenAndAllowlist,
-    DenyPassLiveBoardAndDrops, DenyPassQaRereview,
+    DenyPassLiveBoardAndDrops, DenyPassQaRereview, DenyPassCisoBar,
 )
 
-EXPECTED_SANITIZER_TESTS = 280
+EXPECTED_SANITIZER_TESTS = 311
 
 
 def _discovered_count():

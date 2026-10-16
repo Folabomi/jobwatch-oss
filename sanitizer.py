@@ -439,7 +439,7 @@ _WALK_RE = re.compile(
     r"(?i)(final\s+round|take-?home|phone\s+screen|on-site|on\s+site|got\s+offer|w/|"
     r"[A-Za-z][A-Za-z']*|\d{1,2}/\d{1,2}(?:/\d{2,4})?|"
     r"[\U0001F300-\U0001FAFF\u2300-\u27BF\u2600-\u26FF]|"
-    r"[()\[\]|·•:!\-\u2013\u2014])"
+    r"[()\[\]|·•:!\-\u2013\u2014,])"
 )
 
 # Mine/Kanban only in a board context, not "Mine Safety" / "Kanban Tools Engineer".
@@ -490,6 +490,11 @@ B64_TOKEN_RE = re.compile(
 
 UUID_RE = re.compile(
     r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+
+# RFC 4122: version 1-8 at hex position 13, variant [89ab] at position 17.
+RFC4122_UUID_RE = re.compile(
+    r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
 
 UUID_SHAPE_RE = re.compile(
@@ -969,6 +974,7 @@ _FIELD_VOCAB_EXTRAS = frozenset({
     "dallas", "washington", "district", "columbia", "city",
     "developer", "ads", "studio", "technology",
     "houston", "phoenix", "philadelphia", "miami", "brooklyn",
+    "payments", "ml", "infra", "identity", "workers", "zero", "trust",
 })
 LIVE_VOCAB_PATH = os.path.join(HERE, "tests", "fixtures", "live_field_vocab.json")
 LIVE_POSTINGS_PATH = os.path.join(HERE, "tests", "fixtures", "live_postings.json")
@@ -1111,10 +1117,9 @@ def _field_vocab_blocked(key, value):
     return _field_vocab_miss(key, value)
 
 
-def _uuid_hex_is_safe(token):
-    """True when no 16+ hex run in the UUID decodes to printable ASCII."""
-    compact = (token or "").replace("-", "")
-    return not _printable_hex_leak(compact)
+def _is_rfc4122_uuid(token):
+    """Strict RFC 4122: version 1-8, variant [89ab]. UUID-shaped is not enough."""
+    return bool(token and RFC4122_UUID_RE.match(token.strip()))
 
 
 def _is_workday_slug(token):
@@ -1122,13 +1127,13 @@ def _is_workday_slug(token):
 
 
 def _is_exempt_job_id(token):
-    """Numeric ATS ids, and UUIDs whose hex does not decode to printable ASCII."""
+    """Numeric ATS ids, and strict RFC 4122 UUIDs only."""
     raw = (token or "").rstrip("=")
     if not raw:
         return True
     if raw.isdigit():
         return True
-    if UUID_RE.match(raw) and _uuid_hex_is_safe(raw):
+    if _is_rfc4122_uuid(raw):
         return True
     return False
 
@@ -1189,7 +1194,14 @@ def _hex_decodes_printable(raw):
 def _printable_hex_leak(text):
     if not text:
         return False
-    compact = UUID_SHAPE_RE.sub(lambda match: match.group(0).replace("-", ""), text)
+
+    def compact_uuid(match):
+        token = match.group(0)
+        if _is_rfc4122_uuid(token):
+            return "id"
+        return token.replace("-", "")
+
+    compact = UUID_SHAPE_RE.sub(compact_uuid, text)
     for source in (text, compact):
         for match in HEX_RUN_RE.finditer(source):
             raw = match.group(0)
@@ -1214,11 +1226,109 @@ def _b64_payload(token):
         return ""
 
 
+def _payload_has_pii(text):
+    if not text:
+        return False
+    if EMAIL_RE.search(text) or AT_DOT_RE.search(text):
+        return True
+    if PHONE_RE.search(text):
+        return True
+    return False
+
+
+def _hex_plaintext(raw):
+    if not raw or len(raw) < 16 or len(raw) % 2:
+        return ""
+    if not re.fullmatch(r"[0-9a-fA-F]+", raw):
+        return ""
+    try:
+        decoded = bytes.fromhex(raw)
+    except ValueError:
+        return ""
+    if decoded and all(32 <= byte <= 126 for byte in decoded):
+        return decoded.decode("ascii")
+    return ""
+
+
+def _decode_variants(token):
+    """One decode step: percent, hex, or base64 / base64url (padded or not)."""
+    out = []
+    if not token:
+        return out
+    pct = _decode_percent(token)
+    if pct != token:
+        out.append(pct)
+    hx = _hex_plaintext(token)
+    if hx:
+        out.append(hx)
+    payload = _b64_payload(token)
+    if payload:
+        out.append(payload)
+    return out
+
+
+def _nested_pii(token, max_depth=2):
+    """True if token or a decode up to max_depth is email/phone/hex PII."""
+    if not token:
+        return False
+    if _is_rfc4122_uuid(token) or (token.isdigit() and len(token) < 16):
+        return False
+    stack = [(token, 0)]
+    seen = {token}
+    while stack:
+        item, depth = stack.pop()
+        if _is_rfc4122_uuid(item):
+            continue
+        if _payload_has_pii(item):
+            return True
+        if not _is_rfc4122_uuid(item) and _printable_hex_leak(item):
+            return True
+        if depth >= max_depth:
+            continue
+        for decoded in _decode_variants(item):
+            if decoded not in seen:
+                seen.add(decoded)
+                stack.append((decoded, depth + 1))
+    return False
+
+
+def _slug_units(segment):
+    """Full segment plus pieces split on _, -, . (each sep and all three)."""
+    if not segment:
+        return []
+    units = [segment]
+    for sep in (r"_+", r"-+", r"\.+"):
+        units.extend(part for part in re.split(sep, segment) if part)
+    units.extend(part for part in re.split(r"[_\-.]+", segment) if part)
+    seen = set()
+    out = []
+    for unit in units:
+        if unit not in seen:
+            seen.add(unit)
+            out.append(unit)
+    return out
+
+
+def _text_has_encoded_pii(text):
+    """Split slugs on _ - . and decode-check every piece, up to 2 levels."""
+    if not text:
+        return False
+    if _nested_pii(text):
+        return True
+    for segment in (text or "").split("/"):
+        for unit in _slug_units(segment):
+            if _nested_pii(unit):
+                return True
+    return False
+
+
 def _looks_like_b64(token, allow_id=False):
     if not token or len(token) < 12:
         return False
     if allow_id and _is_exempt_job_id(token):
         return False
+    if _nested_pii(token):
+        return True
     body = token.rstrip("=")
     if CAMEL_RE.match(body) or SLUG_RE.match(body):
         return False
@@ -1311,15 +1421,21 @@ def _b64_email(value):
 def _query_has_blocked(query):
     if not query:
         return False
+    if _text_has_encoded_pii(query):
+        return True
     decoded = _deny_normalize(query)
     if EMAIL_RE.search(query) or EMAIL_RE.search(decoded):
         return True
     if AT_DOT_RE.search(query) or AT_DOT_RE.search(decoded):
         return True
+    if _text_has_encoded_pii(decoded):
+        return True
     for part in query.split("&"):
         _key, sep, val = part.partition("=")
         if not sep:
             val = part
+        if _text_has_encoded_pii(val) or _text_has_encoded_pii(_decode_percent(val)):
+            return True
         val = _decode_percent(val)
         if EMAIL_RE.search(val) or _b64_email(val) or _b64_in_text(val):
             return True
@@ -1343,6 +1459,8 @@ def _sanitize_url(value):
         raise SanitizerBlocked("url host is not ascii")
     if _query_has_blocked(parsed.query) or _query_has_blocked(parsed.fragment):
         raise SanitizerBlocked("url query is blocked")
+    if _text_has_encoded_pii(parsed.path):
+        raise SanitizerBlocked("url path has encoded text")
     if _path_has_person(parsed.path):
         raise SanitizerBlocked("url path has a person name")
     if _onsite_in(parsed.path):
@@ -1394,6 +1512,8 @@ def _find_blocked_plain(text, allow_id=False):
         return "application"
     if not allow_id and _printable_hex_leak(text):
         return "hex"
+    if _text_has_encoded_pii(text):
+        return "encoded"
     if RESUME_FILE_RE.search(text):
         return "resume_file"
     if SPLIT_EMAIL_RE.search(text):
@@ -1634,7 +1754,7 @@ def _mask_exempt_uuids_in_text(text):
 
     def repl(match):
         token = match.group(0)
-        if _uuid_hex_is_safe(token):
+        if _is_rfc4122_uuid(token):
             return "id"
         return token
 

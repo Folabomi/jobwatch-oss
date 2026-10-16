@@ -20,6 +20,8 @@
     "full",
     "hunting",
     "hybrid",
+    "identity",
+    "infra",
     "ii",
     "iii",
     "incident",
@@ -27,8 +29,10 @@
     "intelligence",
     "investigator",
     "l5",
+    "ml",
     "native",
     "network",
+    "payments",
     "platform",
     "remote",
     "response",
@@ -47,7 +51,10 @@
     "technical",
     "technology",
     "threat",
-    "traffic"
+    "traffic",
+    "trust",
+    "workers",
+    "zero"
   ],
   "city": [
     "austin",
