@@ -123,6 +123,7 @@ class VocabMiss(Exception):
 
 DROP_RATE_LIMIT = 0.10
 DROP_COUNT_LIMIT = 25
+DROP_COUNT_RATE = 0.03
 
 _LAST_DROPS = {}
 _DROP_TOTAL_RECORDS = 0
@@ -161,12 +162,19 @@ def record_vocab_drop(field):
     _note_drop(field)
 
 
+def _absolute_drop_limit(total):
+    """Floor is 25; large batches may drop max(25, 3% of records)."""
+    if not total:
+        return DROP_COUNT_LIMIT
+    return max(DROP_COUNT_LIMIT, total * DROP_COUNT_RATE)
+
+
 def drops_exceed_budget(total=None, dropped=None):
     if total is None:
         total = _DROP_TOTAL_RECORDS
     if dropped is None:
         dropped = sum(_LAST_DROPS.values())
-    if dropped > DROP_COUNT_LIMIT:
+    if dropped > _absolute_drop_limit(total):
         return True
     if total and dropped / float(total) > DROP_RATE_LIMIT:
         return True
@@ -350,6 +358,9 @@ EMAIL_RE = re.compile(
 PHONE_RE = re.compile(
     r"(?<!\d)(?:\+?\d{1,3}[\s.-]*)?(?:\([2-9]\d{2}\)|[2-9]\d{2})[\s.-]\d{3}[\s.-]\d{4}(?!\d)"
 )
+
+# E.164: + followed by 10-15 digits. Bare 10-digit numbers are job IDs.
+E164_RE = re.compile(r"\+\d{10,15}(?!\d)")
 
 LINKEDIN_RE = re.compile(
     r"https?://(?:[\w-]+\.)?linkedin\.com/(?:in|pub|mwlite/in)/[A-Za-z0-9_\-%/]+",
@@ -1231,7 +1242,7 @@ def _payload_has_pii(text):
         return False
     if EMAIL_RE.search(text) or AT_DOT_RE.search(text):
         return True
-    if PHONE_RE.search(text):
+    if PHONE_RE.search(text) or E164_RE.search(text):
         return True
     return False
 
@@ -1268,7 +1279,10 @@ def _decode_variants(token):
 
 
 def _nested_pii(token, max_depth=2):
-    """True if token or a decode up to max_depth is email/phone/hex PII."""
+    """True if token or a decode up to max_depth is email/phone/hex PII.
+
+    If a token still decodes after the cap, fail closed.
+    """
     if not token:
         return False
     if _is_rfc4122_uuid(token) or (token.isdigit() and len(token) < 16):
@@ -1283,9 +1297,12 @@ def _nested_pii(token, max_depth=2):
             return True
         if not _is_rfc4122_uuid(item) and _printable_hex_leak(item):
             return True
+        variants = _decode_variants(item)
         if depth >= max_depth:
+            if variants:
+                return True
             continue
-        for decoded in _decode_variants(item):
+        for decoded in variants:
             if decoded not in seen:
                 seen.add(decoded)
                 stack.append((decoded, depth + 1))
@@ -1494,7 +1511,7 @@ def _find_blocked_plain(text, allow_id=False):
         return "application"
     if EMAIL_RE.search(text):
         return "email"
-    if PHONE_RE.search(text):
+    if PHONE_RE.search(text) or E164_RE.search(text):
         return "phone"
     if LINKEDIN_RE.search(text):
         return "linkedin"
@@ -1852,8 +1869,8 @@ def sanitize_records(records, accumulate=False):
     """Sanitize a list of public records.
 
     VocabMiss drops the record and counts it by field name. Deny-class hits
-    still raise SanitizerBlocked and fail the page. More than 25 drops, or
-    more than 10% of the batch, fails the page.
+    still raise SanitizerBlocked and fail the page. More than 10% of the
+    batch, or more than max(25, 3% of records), fails the page.
     """
     global _DROP_TOTAL_RECORDS
     try:

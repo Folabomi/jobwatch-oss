@@ -266,9 +266,17 @@ class PhonePattern(unittest.TestCase):
         with self.assertRaises(SanitizerBlocked):
             sanitize(job_with(title="Call me on (206) 555-0100 after 5."))
 
+    def test_e164_in_title_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="Call me on +12065550142 after 5."))
+
     def test_title_without_a_phone_passes(self):
         cleaned = sanitize(job_with(title="Call the hiring desk after 5."))
         self.assertNotIn(sanitizer.REDACTED, json.dumps(cleaned))
+
+    def test_bare_ten_digit_in_title_is_not_a_phone(self):
+        cleaned = sanitize(job_with(title="Tracking req 1206555014 this week."))
+        self.assertEqual(cleaned["title"], "Tracking req 1206555014 this week.")
 
 
 class NamePattern(unittest.TestCase):
@@ -1574,6 +1582,33 @@ class DenyPassQaRereview(unittest.TestCase):
         self.assertEqual(len(kept), 225)
         self.assertEqual(last_drop_counts(), {"location": 25})
 
+    def test_drop_count_exactly_three_percent_keeps_page(self):
+        records = [
+            job_with(id="greenhouse:acme:{}".format(i), location="Denver, CO")
+            for i in range(1000)
+        ]
+        for i in range(30):
+            records[i] = job_with(
+                id="greenhouse:acme:{}".format(i),
+                location="Atlantis",
+            )
+        kept = sanitize_records(records)
+        self.assertEqual(len(kept), 970)
+        self.assertEqual(last_drop_counts(), {"location": 30})
+
+    def test_drop_count_over_three_percent_fails_page(self):
+        records = [
+            job_with(id="greenhouse:acme:{}".format(i), location="Denver, CO")
+            for i in range(1000)
+        ]
+        for i in range(31):
+            records[i] = job_with(
+                id="greenhouse:acme:{}".format(i),
+                location="Atlantis",
+            )
+        with self.assertRaises(SanitizerBlocked):
+            sanitize_records(records)
+
     def test_dropped_value_never_appears_in_logs_or_output(self):
         buf = io.StringIO()
         records = [job_with(id="greenhouse:acme:{}".format(i)) for i in range(10)]
@@ -1926,6 +1961,139 @@ class DenyPassCisoBar(unittest.TestCase):
         cleaned = sanitize(dict(CLEAN_ORG, team="Zero Trust"))
         self.assertEqual(cleaned["team"], "Zero Trust")
 
+    E164 = "+12065550142"
+    E164_B64 = "KzEyMDY1NTUwMTQy"
+    E164_B64_PADDED = "KzEyMDY1NTUwMTQ="
+
+    def test_greenhouse_slug_b64_e164_unpadded_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://boards.greenhouse.io/acme/jobs/Sr-Engineer_" + self.E164_B64,
+            ))
+
+    def test_ashby_slug_b64_e164_unpadded_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://jobs.ashbyhq.com/openai/Sr-Engineer_" + self.E164_B64,
+            ))
+
+    def test_workday_slug_b64_e164_unpadded_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                company="CrowdStrike",
+                url=(
+                    "https://crowdstrike.wd5.myworkdayjobs.com/en-US/"
+                    "crowdstrikecareers/job/USA---New-York-NY/Sr-Engineer_"
+                    + self.E164_B64
+                ),
+            ))
+
+    def test_greenhouse_slug_b64_e164_padded_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://boards.greenhouse.io/acme/jobs/Sr-Engineer_" + self.E164_B64_PADDED,
+            ))
+
+    def test_ashby_slug_b64_e164_padded_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://jobs.ashbyhq.com/openai/Sr-Engineer_" + self.E164_B64_PADDED,
+            ))
+
+    def test_workday_slug_b64_e164_padded_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                company="CrowdStrike",
+                url=(
+                    "https://crowdstrike.wd5.myworkdayjobs.com/en-US/"
+                    "crowdstrikecareers/job/USA---New-York-NY/Sr-Engineer_"
+                    + self.E164_B64_PADDED
+                ),
+            ))
+
+    def test_greenhouse_e164_slug_piece_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://boards.greenhouse.io/acme/jobs/Sr_" + self.E164,
+            ))
+
+    def test_ashby_e164_slug_piece_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://jobs.ashbyhq.com/openai/Sr_" + self.E164,
+            ))
+
+    def test_workday_e164_slug_piece_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                company="CrowdStrike",
+                url=(
+                    "https://crowdstrike.wd5.myworkdayjobs.com/en-US/"
+                    "crowdstrikecareers/job/USA---New-York-NY/Sr_"
+                    + self.E164
+                ),
+            ))
+
+    def test_greenhouse_e164_path_segment_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://boards.greenhouse.io/acme/jobs/" + self.E164,
+            ))
+
+    def test_ashby_e164_path_segment_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://jobs.ashbyhq.com/openai/" + self.E164,
+            ))
+
+    def test_workday_e164_path_segment_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                company="CrowdStrike",
+                url=(
+                    "https://crowdstrike.wd5.myworkdayjobs.com/en-US/"
+                    "crowdstrikecareers/job/USA---New-York-NY/"
+                    + self.E164
+                ),
+            ))
+
+    def test_bare_ten_digit_ats_id_still_passes(self):
+        url = "https://boards.greenhouse.io/cloudflare/jobs/1206555014"
+        cleaned = sanitize(job_with(company="Cloudflare", url=url))
+        self.assertEqual(cleaned["url"], url)
+
+    def _nested_b64(self, text, levels):
+        raw = text.encode("ascii")
+        for _ in range(levels):
+            raw = __import__("base64").b64encode(raw)
+        return raw.decode("ascii")
+
+    def test_b64_nested_3_levels_is_blocked(self):
+        token = self._nested_b64("jane@x.com", 3)
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://boards.greenhouse.io/acme/jobs/Sr-Engineer_" + token,
+            ))
+
+    def test_b64_nested_5_levels_is_blocked(self):
+        token = self._nested_b64("jane@x.com", 5)
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                url="https://jobs.ashbyhq.com/openai/Sr-Engineer_" + token,
+            ))
+
+    def test_b64_nested_10_levels_is_blocked(self):
+        token = self._nested_b64("jane@x.com", 10)
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(
+                company="CrowdStrike",
+                url=(
+                    "https://crowdstrike.wd5.myworkdayjobs.com/en-US/"
+                    "crowdstrikecareers/job/USA---New-York-NY/Sr-Engineer_"
+                    + token
+                ),
+            ))
+
 
 class DeploySiteHold(unittest.TestCase):
     def test_deploy_site_honors_publish_hold(self):
@@ -1973,7 +2141,7 @@ TEST_CASES = (
     DenyPassLiveBoardAndDrops, DenyPassQaRereview, DenyPassCisoBar,
 )
 
-EXPECTED_SANITIZER_TESTS = 311
+EXPECTED_SANITIZER_TESTS = 331
 
 
 def _discovered_count():
