@@ -430,8 +430,12 @@ class DenyPassDataAttr(unittest.TestCase):
         with self.assertRaises(SanitizerBlocked):
             scan_public_text('<div data-notes="ada@example.com">Acme Cloud</div>')
 
-    def test_unrelated_data_attr_passes(self):
-        scan_public_text('<div data-tier="rare">Acme Cloud</div>')
+    def test_any_data_attr_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text('<div data-tier="rare">Acme Cloud</div>')
+
+    def test_markup_without_data_attr_passes(self):
+        scan_public_text('<div class="tier">Acme Cloud</div>')
 
 
 class FailClosed(unittest.TestCase):
@@ -616,7 +620,8 @@ class PublishHold(unittest.TestCase):
             text=True,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("publish hold", result.stdout)
+        self.assertIn("held", result.stdout)
+        self.assertNotIn("site published", result.stdout)
         self.assertIn("SUMMARY new=0", result.stdout)
         self.assertTrue(os.path.exists(os.path.join(root, "jobwatch_report.md")))
         self.assertFalse(os.path.exists(deploy_ran))
@@ -734,9 +739,9 @@ class DenyPassFormatAndBoardNames(unittest.TestCase):
         with self.assertRaises(SanitizerBlocked):
             scan_public_text("sync the Kanban")
 
-    def test_cyrillic_mine_is_blocked(self):
+    def test_cyrillic_mine_board_is_blocked(self):
         with self.assertRaises(SanitizerBlocked):
-            scan_public_text("M\u0456ne")
+            scan_public_text("open the M\u0456ne")
 
     def test_hidden_chip_label_passes(self):
         scan_public_text("Hidden")
@@ -779,8 +784,9 @@ class DenyPassDataAndDataset(unittest.TestCase):
         with self.assertRaises(SanitizerBlocked):
             scan_public_text('<div data-foo="ada@example.com">Acme Cloud</div>')
 
-    def test_data_tier_passes(self):
-        scan_public_text('<div data-tier="rare">Acme Cloud</div>')
+    def test_data_tier_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text('<div data-tier="rare">Acme Cloud</div>')
 
     def test_dataset_notes_is_blocked(self):
         with self.assertRaises(SanitizerBlocked):
@@ -795,6 +801,125 @@ class DenyPassDataAndDataset(unittest.TestCase):
 
     def test_obj_tier_access_passes(self):
         scan_public_text('obj["tier"]')
+
+
+class KnownCompaniesHardcoded(unittest.TestCase):
+    def test_orgs_file_cannot_whitelist_a_person_name(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        path = os.path.join(tmp, "organizations.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"organizations": [{"name": "Jane Roe"}]}, handle)
+        with mock.patch.object(sanitizer, "ORGS_PATH", path):
+            self.assertNotIn("Jane Roe", sanitizer._known_companies())
+            with self.assertRaises(SanitizerBlocked):
+                sanitize({"name": "Jane Roe"})
+
+    def test_hardcoded_company_still_passes(self):
+        self.assertIn("Acme Cloud", sanitizer._known_companies())
+        cleaned = sanitize({"name": "Acme Cloud"})
+        self.assertEqual(cleaned["name"], "Acme Cloud")
+
+
+class DenyPassLeaksAndUrls(unittest.TestCase):
+    def test_skill_person_name_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(skills=["Jane Roe"]))
+
+    def test_skill_ddos_passes(self):
+        cleaned = sanitize(job_with(skills=["ddos"]))
+        self.assertEqual(cleaned["skills"], ["ddos"])
+
+    def test_locations_person_name_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(location="Seattle; Jane Roe home"))
+
+    def test_org_locations_person_name_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(dict(CLEAN_ORG, locations="Seattle; Jane Roe home"))
+
+    def test_locations_city_passes(self):
+        cleaned = sanitize(job_with(location="Seattle; Remote US"))
+        self.assertEqual(cleaned["location"], "Seattle; Remote US")
+
+    def test_org_locations_city_passes(self):
+        cleaned = sanitize(dict(CLEAN_ORG, locations="Seattle; Remote US"))
+        self.assertEqual(cleaned["locations"], "Seattle; Remote US")
+
+    def test_interviewing_with_jane_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="SWE - interviewing w/ Jane"))
+
+    def test_title_onsite_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="SWE - onsite"))
+
+    def test_title_offer_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="SWE - offer"))
+
+    def test_title_screen_with_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(title="SWE - screen with desk"))
+
+    def test_title_offer_a_role_passes(self):
+        cleaned = sanitize(job_with(title="We offer a mitigation seat"))
+        self.assertEqual(cleaned["title"], "We offer a mitigation seat")
+
+    def test_applied_scientist_passes(self):
+        cleaned = sanitize(job_with(title="Applied Scientist"))
+        self.assertEqual(cleaned["title"], "Applied Scientist")
+
+    def test_applied_ai_engineer_passes(self):
+        cleaned = sanitize(job_with(title="Applied AI Engineer"))
+        self.assertEqual(cleaned["title"], "Applied AI Engineer")
+
+    def test_mine_safety_passes(self):
+        cleaned = sanitize(job_with(title="Mine Safety"))
+        self.assertEqual(cleaned["title"], "Mine Safety")
+
+    def test_kanban_tools_engineer_passes(self):
+        cleaned = sanitize(job_with(title="Kanban Tools Engineer"))
+        self.assertEqual(cleaned["title"], "Kanban Tools Engineer")
+
+    def test_hex_at_escape_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            scan_public_text("ada\\x40example.com")
+
+    def test_percent_at_in_url_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(url="https://example.com/jobs/1?e=ada%40example.com"))
+
+    def test_person_name_in_url_path_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(url="https://example.com/jobs/1/jane-roe-referral"))
+
+    def test_base64_email_in_query_is_blocked(self):
+        token = __import__("base64").b64encode(b"ada@example.com").decode("ascii")
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(url="https://example.com/jobs/1?e=" + token))
+
+    def test_javascript_url_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(url="javascript:alert(1)"))
+
+    def test_ftp_url_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(url="ftp://example.com/jobs/1"))
+
+    def test_data_url_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(url="data:text/html,hi"))
+
+    def test_http_url_is_blocked(self):
+        with self.assertRaises(SanitizerBlocked):
+            sanitize(job_with(url="http://example.com/jobs/1"))
+
+    def test_https_url_strips_query_and_passes(self):
+        cleaned = sanitize(job_with(url="https://example.com/jobs/100?utm=1#top"))
+        self.assertEqual(cleaned["url"], "https://example.com/jobs/100")
+        self.assertNotIn("?", cleaned["url"])
+        self.assertNotIn("#", cleaned["url"])
 
 
 class DeploySiteHold(unittest.TestCase):
@@ -838,10 +963,11 @@ TEST_CASES = (
     StatusMetaLocal, DeploySiteGated, PublishHold, DenyPassCaseInsensitive,
     DenyPassEnumsAndAppPhrases, DenyPassResumeAndEmailObfuscation,
     DenyPassFormatAndBoardNames, DenyPassCommentsAndScript,
-    DenyPassDataAndDataset, DeploySiteHold,
+    DenyPassDataAndDataset, DeploySiteHold, KnownCompaniesHardcoded,
+    DenyPassLeaksAndUrls,
 )
 
-EXPECTED_SANITIZER_TESTS = 124
+EXPECTED_SANITIZER_TESTS = 151
 
 
 def _discovered_count():

@@ -140,13 +140,23 @@ class LocationGate(unittest.TestCase):
         )
 
 
+APPLY_TEST_CASES = (
+    TermMatching, RequirementExtraction, EligibilityGate,
+    PageBudget, WarmJoin, LocationGate,
+)
+EXPECTED_APPLY_TESTS = 11
+
+
+def setUpModule():
+    found = sum(
+        len(unittest.TestLoader().loadTestsFromTestCase(cls)._tests)
+        for cls in APPLY_TEST_CASES
+    )
+    if found != EXPECTED_APPLY_TESTS:
+        raise AssertionError(
+            "expected {} tests, collected {}".format(EXPECTED_APPLY_TESTS, found)
+        )
+
+
 if __name__ == "__main__":
-    # Appending a class below this block defines it after main() has already
-    # run, so the test never executes and the count quietly stays the same.
-    # Assert the count instead of trusting it.
-    EXPECTED = 11
-    found = sum(len(unittest.TestLoader().loadTestsFromTestCase(c)._tests)
-                for c in (TermMatching, RequirementExtraction, EligibilityGate,
-                          PageBudget, WarmJoin, LocationGate))
-    assert found == EXPECTED, "expected {} tests, collected {}".format(EXPECTED, found)
     unittest.main(verbosity=2)

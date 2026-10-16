@@ -412,7 +412,7 @@ function facetOk(name, value){
 
 function safeUrl(u){
   u = String(u || '');
-  return /^https?:\/\//i.test(u) ? u : '#';
+  return /^https:\/\//i.test(u) ? u : '#';
 }
 
 function esc(s){
@@ -495,8 +495,8 @@ function reqHtml(r){
         (hidden[r.id]
           ? (hidden[r.id] === 'file'
               ? '<span class="act muted" title="Hidden in dismissed.json. Remove it there to restore.">Hidden in file</span>'
-              : '<button class="act muted" data-restore="' + esc(r.id) + '">Restore</button>')
-          : '<button class="act muted" data-hide="' + esc(r.id) + '" title="Hide this req. Stored in this browser.">Not for me</button>') +
+              : '<button class="act muted" restoreid="' + esc(r.id) + '">Restore</button>')
+          : '<button class="act muted" hideid="' + esc(r.id) + '" title="Hide this req. Stored in this browser.">Not for me</button>') +
       '</div>' +
       '<p class="since">tracked since ' + esc(r.since) + '</p>' +
     '</div>' +
@@ -619,15 +619,15 @@ function render(){
 
 function syncRow(f){
   var sel = multi[f];
-  document.querySelectorAll('button.chip[data-f="' + f + '"]').forEach(function(x){
-    var v = x.dataset.v;
+  document.querySelectorAll('button.chip[facet="' + f + '"]').forEach(function(x){
+    var v = x.getAttribute('val');
     x.setAttribute('aria-pressed', String(v === 'all' ? sel.length === 0 : sel.indexOf(v) >= 0));
   });
 }
 
-document.querySelectorAll('button.chip[data-f]').forEach(function(b){
+document.querySelectorAll('button.chip[facet]').forEach(function(b){
   b.addEventListener('click', function(){
-    var f = b.dataset.f, v = b.dataset.v;
+    var f = b.getAttribute('facet'), v = b.getAttribute('val');
     if(multi[f]){
       if(v === 'all'){ multi[f] = []; }
       else {
@@ -637,7 +637,7 @@ document.querySelectorAll('button.chip[data-f]').forEach(function(b){
       syncRow(f);
     } else {
       state[f] = v;
-      document.querySelectorAll('button.chip[data-f="' + f + '"]').forEach(function(x){
+      document.querySelectorAll('button.chip[facet="' + f + '"]').forEach(function(x){
         x.setAttribute('aria-pressed', String(x === b));
       });
     }
@@ -645,9 +645,9 @@ document.querySelectorAll('button.chip[data-f]').forEach(function(b){
   });
 });
 
-document.querySelectorAll('button.chip[data-t]').forEach(function(b){
+document.querySelectorAll('button.chip[tog]').forEach(function(b){
   b.addEventListener('click', function(){
-    var t = b.dataset.t;
+    var t = b.getAttribute('tog');
     toggles[t] = !toggles[t];
     b.setAttribute('aria-pressed', String(toggles[t]));
     render();
@@ -655,10 +655,10 @@ document.querySelectorAll('button.chip[data-t]').forEach(function(b){
 });
 
 document.getElementById('list').addEventListener('click', function(ev){
-  var h = ev.target.closest('[data-hide]');
-  if(h){ hideReq(h.dataset.hide); return; }
-  var r = ev.target.closest('[data-restore]');
-  if(r){ restoreReq(r.dataset.restore); }
+  var h = ev.target.closest('[hideid]');
+  if(h){ hideReq(h.getAttribute('hideid')); return; }
+  var r = ev.target.closest('[restoreid]');
+  if(r){ restoreReq(r.getAttribute('restoreid')); }
 });
 
 var hideChip = document.getElementById('hidechip');
@@ -1037,40 +1037,40 @@ def render(state, slug, orgs_data=(), dismissed=()):
 <div class="controls">
   <div class="ctl-row">
     <span class="ctl-label">Sector</span>
-    <button class="chip" data-f="sector" data-v="all" aria-pressed="true">All</button>
-    <button class="chip" data-f="sector" data-v="big_tech" aria-pressed="false">Big tech</button>
-    <button class="chip" data-f="sector" data-v="ai_lab" aria-pressed="false">AI lab</button>
-    <button class="chip" data-f="sector" data-v="cyber" aria-pressed="false">Cyber</button>
-    <button class="chip" data-f="sector" data-v="other" aria-pressed="false">Other</button>
-    <button class="chip" data-f="sector" data-v="gov" aria-pressed="false">Government</button>
+    <button class="chip" facet="sector" val="all" aria-pressed="true">All</button>
+    <button class="chip" facet="sector" val="big_tech" aria-pressed="false">Big tech</button>
+    <button class="chip" facet="sector" val="ai_lab" aria-pressed="false">AI lab</button>
+    <button class="chip" facet="sector" val="cyber" aria-pressed="false">Cyber</button>
+    <button class="chip" facet="sector" val="other" aria-pressed="false">Other</button>
+    <button class="chip" facet="sector" val="gov" aria-pressed="false">Government</button>
   </div>
   <div class="ctl-row">
     <span class="ctl-label">Level</span>
-    <button class="chip" data-f="move" data-v="all" aria-pressed="true">In scope, L6+</button>
-    <button class="chip" data-f="move" data-v="up" aria-pressed="false">Up-level</button>
-    <button class="chip" data-f="move" data-v="lateral" aria-pressed="false">Lateral</button>
-    <button class="chip" data-f="move" data-v="unknown" aria-pressed="false">Unresolved</button>
-    <button class="chip" data-f="move" data-v="down" aria-pressed="false">Down-level</button>
+    <button class="chip" facet="move" val="all" aria-pressed="true">In scope, L6+</button>
+    <button class="chip" facet="move" val="up" aria-pressed="false">Up-level</button>
+    <button class="chip" facet="move" val="lateral" aria-pressed="false">Lateral</button>
+    <button class="chip" facet="move" val="unknown" aria-pressed="false">Unresolved</button>
+    <button class="chip" facet="move" val="down" aria-pressed="false">Down-level</button>
   </div>
   <div class="ctl-row">
     <span class="ctl-label">Comp</span>
-    <button class="chip" data-f="paytier" data-v="all" aria-pressed="true">Any</button>
-    <button class="chip" data-f="paytier" data-v="400" aria-pressed="false">$400K+</button>
-    <button class="chip" data-f="paytier" data-v="450" aria-pressed="false">$450K+</button>
-    <button class="chip" data-f="paytier" data-v="600" aria-pressed="false">$600K+</button>
-    <button class="chip" data-t="banded" aria-pressed="false">Has posted band</button>
+    <button class="chip" facet="paytier" val="all" aria-pressed="true">Any</button>
+    <button class="chip" facet="paytier" val="400" aria-pressed="false">$400K+</button>
+    <button class="chip" facet="paytier" val="450" aria-pressed="false">$450K+</button>
+    <button class="chip" facet="paytier" val="600" aria-pressed="false">$600K+</button>
+    <button class="chip" tog="banded" aria-pressed="false">Has posted band</button>
   </div>
   <div class="ctl-row">
     <span class="ctl-label">Fit</span>
-    <button class="chip" data-f="fit" data-v="all" aria-pressed="true">All</button>
-    <button class="chip" data-f="fit" data-v="core" aria-pressed="false">Core mandate</button>
-    <button class="chip" data-f="fit" data-v="strong" aria-pressed="false">Strong</button>
-    <button class="chip" data-f="fit" data-v="adj" aria-pressed="false">Adjacent</button>
-    <button class="chip" data-t="traffic" aria-pressed="false">Hostile traffic at scale</button>
-    <button class="chip" data-t="customer" aria-pressed="false">Warm channel</button>
-    <button class="chip" data-f="rel" data-v="competitor" aria-pressed="false">Shield competitor</button>
-    <button class="chip" data-f="rel" data-v="customer" aria-pressed="false">AWS customer</button>
-    <button class="chip" data-t="open" aria-pressed="false">Has live reqs</button>
+    <button class="chip" facet="fit" val="all" aria-pressed="true">All</button>
+    <button class="chip" facet="fit" val="core" aria-pressed="false">Core mandate</button>
+    <button class="chip" facet="fit" val="strong" aria-pressed="false">Strong</button>
+    <button class="chip" facet="fit" val="adj" aria-pressed="false">Adjacent</button>
+    <button class="chip" tog="traffic" aria-pressed="false">Hostile traffic at scale</button>
+    <button class="chip" tog="customer" aria-pressed="false">Warm channel</button>
+    <button class="chip" facet="rel" val="competitor" aria-pressed="false">Shield competitor</button>
+    <button class="chip" facet="rel" val="customer" aria-pressed="false">AWS customer</button>
+    <button class="chip" tog="open" aria-pressed="false">Has live reqs</button>
   </div>
   <div class="ctl-row">
     <span class="ctl-label">Hidden</span>
@@ -1079,19 +1079,19 @@ def render(state, slug, orgs_data=(), dismissed=()):
   </div>
   <div class="ctl-row">
     <span class="ctl-label">Where</span>
-    <button class="chip" data-f="place" data-v="all" aria-pressed="true">Anywhere</button>
-    <button class="chip" data-f="place" data-v="remote" aria-pressed="false">Remote</button>
-    <button class="chip" data-f="place" data-v="us" aria-pressed="false">US site</button>
-    <button class="chip" data-f="place" data-v="multi" aria-pressed="false">Multi site</button>
-    <button class="chip" data-f="place" data-v="unclear" aria-pressed="false">Unstated</button>
+    <button class="chip" facet="place" val="all" aria-pressed="true">Anywhere</button>
+    <button class="chip" facet="place" val="remote" aria-pressed="false">Remote</button>
+    <button class="chip" facet="place" val="us" aria-pressed="false">US site</button>
+    <button class="chip" facet="place" val="multi" aria-pressed="false">Multi site</button>
+    <button class="chip" facet="place" val="unclear" aria-pressed="false">Unstated</button>
   </div>
   <div class="ctl-row">
     <span class="ctl-label">Signal</span>
-    <button class="chip" data-f="tier" data-v="all" aria-pressed="true">All</button>
-    <button class="chip" data-f="tier" data-v="rare" aria-pressed="false">Names the discipline</button>
-    <button class="chip" data-f="tier" data-v="direct" aria-pressed="false">Traffic adjacent</button>
-    <button class="chip" data-f="tier" data-v="wide" aria-pressed="false">Wide term</button>
-    <button class="chip" data-t="sde" aria-pressed="false">SDE signal</button>
+    <button class="chip" facet="tier" val="all" aria-pressed="true">All</button>
+    <button class="chip" facet="tier" val="rare" aria-pressed="false">Names the discipline</button>
+    <button class="chip" facet="tier" val="direct" aria-pressed="false">Traffic adjacent</button>
+    <button class="chip" facet="tier" val="wide" aria-pressed="false">Wide term</button>
+    <button class="chip" tog="sde" aria-pressed="false">SDE signal</button>
   </div>
   <div class="ctl-row">
     <span class="ctl-label">Slice</span>

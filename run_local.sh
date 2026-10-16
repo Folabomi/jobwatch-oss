@@ -36,7 +36,7 @@ NEW="${NEW:-0}"; LIVE="${LIVE:-0}"; CLOSED="${CLOSED:-0}"
 # There is no MonoClaw call: that script is not in this repo and must not
 # push unsanitized output.
 if [ -f .publish_hold ]; then
-  echo "publish hold: .publish_hold present, skipping deploy_site.sh"
+  echo "held"
 else
   set +e
   ./deploy_site.sh >> jobwatch_run.log 2>&1

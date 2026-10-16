@@ -79,11 +79,13 @@ Gauge: bar (str), label (enum), rank (int)
 
 from __future__ import annotations
 
+import base64
 import html as html_lib
 import json
 import os
 import re
 import unicodedata
+from urllib.parse import unquote, urlparse, urlunparse
 
 from taxonomy import (
     ARCH_LABELS,
@@ -131,6 +133,7 @@ _BOARD_STATUS = "board_status"
 _RELATIONSHIP = "relationship"
 _MOVE = "move"
 _PAY_NOTE = "pay_note"
+_URL = "url"
 
 KEY_TYPES = {
     # state
@@ -144,7 +147,7 @@ KEY_TYPES = {
     "company": _COMPANY,
     "title": _STR,
     "location": _STR,
-    "url": _STR,
+    "url": _URL,
     "terms": _STR_LIST,
     "flags": _STR_LIST,
     "pay_low": _INT_OR_NONE,
@@ -175,10 +178,10 @@ KEY_TYPES = {
     "open_now": _BOOL,
     "team": _STR,
     "locations": _STR,
-    "careers": _STR,
+    "careers": _URL,
     "comp": _RECORD,
     "relationship": _RELATIONSHIP,
-    "relationship_url": _STR,
+    "relationship_url": _URL,
     # compensation
     "levels_company": _COMPANY,
     "median_total": _INT_OR_NONE,
@@ -201,7 +204,7 @@ KEY_TYPES = {
     "arch_label": _LABEL,
     "fit_label": _LABEL,
     "warm": _BOOL,
-    "rel_url": _STR,
+    "rel_url": _URL,
     "polled": _BOOL,
     "gauge": _RECORD_OR_NONE,
     "geo": _STR_LIST,
@@ -323,13 +326,64 @@ EMDASH_NAME_RE = re.compile(
 
 MAILTO_RE = re.compile(r"mailto\s*:", re.IGNORECASE)
 
-# Application-tracker phrases that must never appear on a public title/team/loc.
+# Application-tracker phrases. `applied` is a status, not a job-title adjective
+# (Applied Scientist / Applied AI Engineer must pass).
 APP_PHRASE_RE = re.compile(
-    r"\b(?:applied(?:\s+\d{1,2}/\d{1,2}(?:/\d{2,4})?)?"
-    r"|application\s+stage"
-    r"|onsite\s+\d{1,2}/\d{1,2}(?:/\d{2,4})?)\b",
-    re.IGNORECASE,
+    r"(?i)(?:"
+    r"\bapplied\s+\d{1,2}/\d{1,2}(?:/\d{2,4})?"
+    r"|\bapplication\s+stage\b"
+    r"|\bonsite\b"
+    r"|\binterviewing\b"
+    r"|\boffer\b(?!\s+(?:a|an|of|to)\b)"
+    r"|\b(?:phone\s+)?screen(?:\s+(?:done|with|scheduled)|ing\b|\s*:|\s+w/)"
+    r"|(?<![a-z])applied(?![ \t]+(?:scientist|ai|engineer|research|science|mathematician)\b)"
+    r")"
 )
+
+# Mine/Kanban only in a board context, not "Mine Safety" / "Kanban Tools Engineer".
+BOARD_NAME_RE = re.compile(
+    r"(?i)(?:\b(?:the|open|sync|view|check)\s+(?:the\s+)?(?:mine|kanban)\b"
+    r"|\b(?:mine|kanban)\s+board\b)"
+)
+
+PERSON_TWO_WORD_RE = re.compile(
+    r"\b([A-Z][a-z]{2,})\s+([A-Z][a-z]{2,})\b"
+)
+
+WITH_PERSON_RE = re.compile(
+    r"(?i)(?:\bw/\s+[A-Za-z]{3,}\b|\bwith\s+(?:ada|alex|anna|daniel|david|emily|james|jane|john|laura|mary|michael|rachel|robert|sarah)\b)"
+)
+
+PATH_NAME_RE = re.compile(
+    r"(?i)/([a-z]{3,})-([a-z]{3,})(?:-([a-z]+))?"
+)
+
+# Role / org / place words. A two-word phrase using one of these is not a person.
+_ROLE_OR_ORG_WORDS = frozenset({
+    "abuse", "adjacent", "ai", "analyst", "applied", "cloud", "core",
+    "detection", "ddos", "edge", "engineer", "engineering", "enterprise",
+    "filter", "hunting", "incident", "industries", "infra", "integrity",
+    "intel", "investigator", "kanban", "lab", "labs", "lead", "mandate",
+    "media", "mine", "mitigation", "network", "networks", "officer",
+    "operations", "perimeter", "platform", "principal", "protection",
+    "reliability", "remote", "research", "response", "safety", "science",
+    "scientist", "security", "senior", "sirt", "software", "staff",
+    "systems", "team", "threat", "tools", "traffic", "waf",
+})
+
+# Given names that turn a following word into a person (Jane Roe, Ada Lovelace).
+_GIVEN_NAMES = frozenset({
+    "ada", "alex", "anna", "daniel", "david", "emily", "james", "jane",
+    "john", "laura", "mary", "michael", "rachel", "robert", "sarah",
+})
+
+BLOCKED_SCHEMES_RE = re.compile(
+    r"(?i)(?:^|[\s\"'=])(?:javascript|data|vbscript|file|blob|ftp|mailto):"
+)
+
+HTTP_SCHEME_RE = re.compile(r"(?i)(?:^|[\s\"'=])http://")
+
+URL_KEYS = frozenset({"url", "careers", "relationship_url", "rel_url"})
 
 RESUME_FILE_RE = re.compile(
     r"(?i)(?:"
@@ -345,8 +399,6 @@ SPLIT_EMAIL_RE = re.compile(
 AT_DOT_RE = re.compile(
     r"(?i)\b[a-z0-9._%+\-]+\s*(?:\[at\]|\(at\))\s*[a-z0-9.\-]+\s*(?:\[dot\]|\(dot\))\s*[a-z]{2,}\b"
 )
-
-BOARD_NAME_RE = re.compile(r"(?i)\b(?:mine|kanban)\b")
 
 COMMENT_SPLIT_RE = re.compile(
     r"[A-Za-z0-9](?:/\*.*?\*/|<!--.*?-->)[A-Za-z0-9]",
@@ -370,8 +422,8 @@ DATASET_RE = re.compile(
 )
 
 DATA_ATTR_RE = re.compile(
-    r"""data-([a-z0-9_-]+)\s*=\s*(['"])(.*?)\2""",
-    re.IGNORECASE | re.DOTALL,
+    r"""\bdata-[a-z0-9_-]+\b""",
+    re.IGNORECASE,
 )
 
 SENSITIVE_ATTRS = frozenset({
@@ -451,26 +503,8 @@ def _profile_literals():
 
 
 def _known_companies():
-    names = set(KNOWN_COMPANIES)
-    for path, list_key, name_key in (
-        (ORGS_PATH, "organizations", "name"),
-    ):
-        if not os.path.exists(path):
-            continue
-        try:
-            with open(path, encoding="utf-8") as handle:
-                data = json.load(handle)
-        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise SanitizerBlocked("cannot read known companies") from exc
-        if not isinstance(data, dict):
-            continue
-        for row in data.get(list_key) or []:
-            if not isinstance(row, dict):
-                continue
-            value = row.get(name_key)
-            if isinstance(value, str) and value and "|" not in value:
-                names.add(value)
-    return names
+    """Hardcoded taxonomy list only. organizations.json cannot add a name."""
+    return KNOWN_COMPANIES
 
 
 def _strip_format_chars(text):
@@ -496,9 +530,23 @@ def _decode_entities(text):
 
 
 def _decode_js_escapes(text):
-    def repl(match):
+    def uni(match):
         return chr(int(match.group(1), 16))
-    return re.sub(r"\\u([0-9a-fA-F]{4})", repl, text)
+    def hx(match):
+        return chr(int(match.group(1), 16))
+    text = re.sub(r"\\u([0-9a-fA-F]{4})", uni, text)
+    text = re.sub(r"\\x([0-9a-fA-F]{2})", hx, text)
+    return text
+
+
+def _decode_percent(text):
+    prev = None
+    for _ in range(4):
+        if text == prev:
+            break
+        prev = text
+        text = unquote(text)
+    return text
 
 
 def _collapse_js_concat(text):
@@ -512,6 +560,7 @@ def _deny_normalize(text):
     folded = unicodedata.normalize("NFKC", text)
     folded = _strip_format_chars(folded)
     folded = _decode_js_escapes(folded)
+    folded = _decode_percent(folded)
     folded = _decode_entities(folded)
     folded = _collapse_js_concat(folded)
     folded = folded.translate(_HOMOGLYPHS)
@@ -574,13 +623,86 @@ def _script_json_blocked(body):
     return None
 
 
-def _data_attr_payloads(text):
-    payloads = []
-    for match in DATA_ATTR_RE.finditer(text):
-        attr = match.group(1).replace("-", "_").lower()
-        value = match.group(3)
-        payloads.append((attr, value))
-    return payloads
+def _looks_like_person_name(text):
+    if WITH_PERSON_RE.search(text):
+        return True
+    known_fold = {name.casefold() for name in KNOWN_COMPANIES}
+    for match in PERSON_TWO_WORD_RE.finditer(text):
+        full = match.group(0)
+        if full.casefold() in known_fold:
+            continue
+        left, right = match.group(1).casefold(), match.group(2).casefold()
+        if left not in _GIVEN_NAMES:
+            continue
+        if right in _ROLE_OR_ORG_WORDS:
+            continue
+        return True
+    return False
+
+
+def _path_has_person(path):
+    """Hyphenated path tokens are a person only when a given name is present.
+
+    `/jobs/1/jane-roe-referral` is blocked. `/fonts-jobwatch` and
+    `/ddos-mitigation` are not.
+    """
+    for match in PATH_NAME_RE.finditer(path or ""):
+        tokens = [part.casefold() for part in match.groups() if part]
+        if any(token in _GIVEN_NAMES for token in tokens):
+            return True
+    return False
+
+
+def _b64_email(value):
+    raw = (value or "").strip()
+    if len(raw) < 8:
+        return False
+    try:
+        pad = "=" * (-len(raw) % 4)
+        decoded = base64.b64decode(raw + pad, validate=False)
+        text = decoded.decode("utf-8", errors="strict")
+    except (ValueError, UnicodeDecodeError):
+        return False
+    return bool(EMAIL_RE.search(text))
+
+
+def _query_has_blocked(query):
+    if not query:
+        return False
+    decoded = _deny_normalize(query)
+    if EMAIL_RE.search(query) or EMAIL_RE.search(decoded):
+        return True
+    if AT_DOT_RE.search(query) or AT_DOT_RE.search(decoded):
+        return True
+    for part in query.split("&"):
+        _key, sep, val = part.partition("=")
+        if not sep:
+            val = part
+        val = _decode_percent(val)
+        if EMAIL_RE.search(val) or _b64_email(val):
+            return True
+    return False
+
+
+def _sanitize_url(value):
+    if not isinstance(value, str) or not value:
+        raise SanitizerBlocked("wrong type for url")
+    decoded = _decode_percent(_decode_js_escapes(value.strip()))
+    parsed = urlparse(decoded)
+    scheme = (parsed.scheme or "").lower()
+    if scheme != "https":
+        raise SanitizerBlocked("url scheme is not https")
+    if not parsed.netloc:
+        raise SanitizerBlocked("url host is missing")
+    if _query_has_blocked(parsed.query) or _query_has_blocked(parsed.fragment):
+        raise SanitizerBlocked("url query is blocked")
+    if _path_has_person(parsed.path):
+        raise SanitizerBlocked("url path has a person name")
+    cleaned = urlunparse(("https", parsed.netloc, parsed.path, "", "", ""))
+    leftover = _find_blocked(cleaned)
+    if leftover:
+        raise SanitizerBlocked("blocked url")
+    return cleaned
 
 
 def _find_blocked_plain(text):
@@ -622,6 +744,16 @@ def _find_blocked_plain(text):
         return "js_key"
     if DATASET_RE.search(text):
         return "dataset"
+    if DATA_ATTR_RE.search(text):
+        return "data_attr"
+    if BLOCKED_SCHEMES_RE.search(text):
+        return "scheme"
+    if HTTP_SCHEME_RE.search(text):
+        return "scheme"
+    if _looks_like_person_name(text):
+        return "name"
+    if _path_has_person(text):
+        return "name"
     for secret_re in SECRET_RES:
         if secret_re.search(text):
             return "secret"
@@ -664,15 +796,6 @@ def _find_blocked(text):
                 if hit:
                     return hit
         hit = _find_blocked(body)
-        if hit:
-            return hit
-    for attr, value in _data_attr_payloads(text):
-        if attr in SENSITIVE_ATTRS:
-            return "data_attr"
-        hit = _find_blocked(value) if value != text else _find_blocked_plain(value)
-        if hit:
-            return hit
-        hit = _find_blocked_plain(_deny_normalize(value))
         if hit:
             return hit
     return None
@@ -756,6 +879,8 @@ def _check_type(key, value, expected):
         return value in MOVE_ENUM
     if expected == _PAY_NOTE:
         return isinstance(value, str) and value in PAY_NOTE_ENUM
+    if expected == _URL:
+        return isinstance(value, str) and value != ""
     return False
 
 
@@ -775,6 +900,8 @@ def _sanitize_value(key, value, expected):
         return [_redact_text(item) for item in value]
     if expected in (_LABEL, _BOARD_STATUS, _RELATIONSHIP, _MOVE, _PAY_NOTE):
         return value
+    if expected == _URL:
+        return _sanitize_url(value)
     if expected == _RECORD:
         return _sanitize_dict(value)
     if expected == _RECORD_OR_NONE:
